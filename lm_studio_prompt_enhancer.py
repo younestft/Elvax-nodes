@@ -92,7 +92,7 @@ class LMStudioPromptEnhancer:
                         "control_after_generate": "fixed",
                     },
                 ),
-                "max_tokens": ("INT", {"default": 1000, "min": 1, "max": 4096}),
+                "max_tokens": ("INT", {"default": 1500, "min": 1, "max": 4096}),
                 "temperature": (
                     "FLOAT",
                     {

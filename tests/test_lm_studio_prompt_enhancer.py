@@ -122,7 +122,7 @@ class NodeContractTests(unittest.TestCase):
         self.assertEqual(inputs["model_key"][1]["default"], "")
         self.assertEqual(inputs["seed"][1]["default"], 0)
         self.assertEqual(inputs["seed"][1]["control_after_generate"], "fixed")
-        self.assertEqual(inputs["max_tokens"][1]["default"], 1000)
+        self.assertEqual(inputs["max_tokens"][1]["default"], 1500)
         self.assertEqual(inputs["temperature"][1]["default"], 0.7)
         self.assertEqual(inputs["top_k"][1]["default"], 20)
         self.assertEqual(inputs["top_p"][1]["default"], 0.8)
