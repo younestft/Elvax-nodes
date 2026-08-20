@@ -27,6 +27,20 @@ def strip_thinking_tags(text):
     return text.strip()
 
 
+def _generation_error_message(error):
+    error_text = str(error)
+    if "exceed_context_size_error" in error_text or "exceeds the available context size" in error_text:
+        return (
+            "The prompt is larger than the model's available context. "
+            "Increase the model context size in LM Studio and try again. "
+            f"({error_text})"
+        )
+    return (
+        "LM Studio generation failed. Make sure LM Studio is open and its local server is enabled. "
+        f"({error_text})"
+    )
+
+
 def _collect_response(model, chat, config, timeout_seconds):
     content_parts = []
     with model.respond_stream(chat, config=config) as stream:
@@ -201,9 +215,6 @@ class LMStudioPromptEnhancer:
             except _GenerationTimedOut:
                 return (f"Error: LM Studio operation timed out after {timeout_seconds} seconds.",)
             except Exception as error:
-                raise RuntimeError(
-                    "LM Studio generation failed. Make sure LM Studio is open and its local server is enabled. "
-                    f"({error})"
-                ) from error
+                raise RuntimeError(_generation_error_message(error)) from error
 
         return generate()

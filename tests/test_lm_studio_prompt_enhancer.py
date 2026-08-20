@@ -253,6 +253,14 @@ class NodeContractTests(unittest.TestCase):
         self.assertIs(second, model)
         self.assertEqual(fake_llm.requested_keys, ["chosen-model"])
 
+    def test_context_overflow_error_tells_user_to_increase_context(self):
+        message = MODULE._generation_error_message(
+            RuntimeError(
+                'request exceeds the available context size: {"type":"exceed_context_size_error"}'
+            )
+        )
+        self.assertIn("Increase the model context size in LM Studio", message)
+
 
 if __name__ == "__main__":
     unittest.main()
