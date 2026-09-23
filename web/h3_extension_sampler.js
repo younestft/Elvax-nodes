@@ -3,6 +3,7 @@ import { app } from "/scripts/app.js";
 const PIPE_IN = "ElvaxDynamicPipeIn";
 const PIPE_OUT = "ElvaxDynamicPipeOut";
 const MAX_PIPE_SLOTS = 32;
+const PIPE_DEFAULT_WIDTH = 260;
 
 function isNode(node, type) {
   return node?.type === type || node?.comfyClass === type;
@@ -20,7 +21,10 @@ function labelFor(output, fallback) {
 }
 
 function finishLayout(node) {
-  node.setSize(node.computeSize());
+  const size = node.computeSize();
+  // Leave room for the title and keep any extra width chosen by the user.
+  size[0] = Math.max(PIPE_DEFAULT_WIDTH, size[0], node.size?.[0] || 0);
+  node.setSize(size);
   node.graph?.setDirtyCanvas(true, true);
 }
 
