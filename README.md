@@ -14,6 +14,14 @@ Features:
 - Removes LM Studio reasoning fragments and `<think>` / `<thinking>` blocks.
 - Cancels timed-out generation streams and can unload the model immediately to release VRAM.
 
+## H3 Extension Sampler
+
+A single-node MiniMax H3 continuation lane. It performs seamless latent context
+bridging, Basic Guider, Custom Advanced sampling, and latent-only overlap
+trimming internally. Each instance keeps its own LoRA-fed model, sampler,
+sigmas, and seed. Connect `chain_latent` to the next sampler's
+`previous_latent`, then decode only the final chain.
+
 ## Installation
 
 Clone this repository into `ComfyUI/custom_nodes`:
@@ -32,6 +40,13 @@ Restart ComfyUI. The node appears under the `Elvax` category as **LM Studio Prom
 
 LM Studio must be open with its local API server enabled. On the first run with an empty `model_key`, load a model in LM Studio; the node will remember that model for subsequent runs in the same ComfyUI session.
 
-## Credits
+## License and credits
+
+This repository is licensed under GNU GPL v3 or later; see [LICENSE](LICENSE).
+
+The H3 Extension Sampler is a modified derivative of
+[ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context)
+by NikoDemon80. It retains GPL-licensed H3 layout checks, latent-tail slicing,
+and timeline-aligned audio-continuation logic.
 
 The LM Studio integration behavior is based on the MIT-licensed work from [comfyui-lmstudio-image-to-text-node](https://github.com/mattjohnpowell/comfyui-lmstudio-image-to-text-node) by Matt John Powell. See [LICENSE](LICENSE).
