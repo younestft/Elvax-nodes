@@ -79,6 +79,8 @@ function syncPipeOut(node) {
 }
 
 function installDynamicPipe(node) {
+  if (node.__elvaxDynamicPipeInstalled) return;
+  node.__elvaxDynamicPipeInstalled = true;
   const original = node.onConnectionsChange;
   node.onConnectionsChange = function (...args) {
     const result = original?.apply(this, args);
@@ -99,11 +101,22 @@ function installDynamicPipe(node) {
 // the start of every continuation lane.
 app.registerExtension({
   name: "h3-extension-bridge.sampler-input-order",
+  beforeRegisterNodeDef(nodeType, nodeData) {
+    if (nodeData.name !== PIPE_IN && nodeData.name !== PIPE_OUT) return;
+    const originalCreated = nodeType.prototype.onNodeCreated;
+    const originalConfigure = nodeType.prototype.onConfigure;
+    nodeType.prototype.onNodeCreated = function (...args) {
+      const result = originalCreated?.apply(this, args);
+      requestAnimationFrame(() => installDynamicPipe(this));
+      return result;
+    };
+    nodeType.prototype.onConfigure = function (...args) {
+      const result = originalConfigure?.apply(this, args);
+      requestAnimationFrame(() => installDynamicPipe(this));
+      return result;
+    };
+  },
   nodeCreated(node) {
-    if (isNode(node, PIPE_IN) || isNode(node, PIPE_OUT)) {
-      installDynamicPipe(node);
-      return;
-    }
     if (
       node.type !== "ElvaxH3ExtensionSampler" &&
       node.comfyClass !== "ElvaxH3ExtensionSampler"
