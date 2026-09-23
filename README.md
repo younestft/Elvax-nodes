@@ -22,6 +22,13 @@ trimming internally. Each instance keeps its own LoRA-fed model, sampler,
 sigmas, and seed. Connect `chain_latent` to the next sampler's
 `previous_latent`, then decode only the final chain.
 
+## Dynamic Pipe In / Dynamic Pipe Out
+
+Organize multiple connections as one cable. Dynamic Pipe In begins with one
+input and adds the next empty input when a value is connected. Dynamic Pipe Out
+then creates matching named outputs when the pipe is connected. The nodes carry
+data only; they do not alter the values or improve inference performance.
+
 ## Installation
 
 Clone this repository into `ComfyUI/custom_nodes`:

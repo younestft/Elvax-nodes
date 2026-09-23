@@ -1,11 +1,109 @@
 import { app } from "/scripts/app.js";
 
+const PIPE_IN = "ElvaxDynamicPipeIn";
+const PIPE_OUT = "ElvaxDynamicPipeOut";
+const MAX_PIPE_SLOTS = 32;
+
+function isNode(node, type) {
+  return node.type === type || node.comfyClass === type;
+}
+
+function linkedOutput(node, input) {
+  if (input.link == null) return null;
+  const link = node.graph?.links?.[input.link];
+  const origin = link && node.graph.getNodeById(link.origin_id);
+  return origin?.outputs?.[link.origin_slot] ?? null;
+}
+
+function labelFor(output, fallback) {
+  return output?.label || output?.name || fallback;
+}
+
+function finishLayout(node) {
+  node.setSize(node.computeSize());
+  node.graph?.setDirtyCanvas(true, true);
+}
+
+function syncPipeIn(node) {
+  node.inputs ??= [];
+  for (const input of node.inputs) {
+    const output = linkedOutput(node, input);
+    input.label = labelFor(output, input.name);
+    input.type = output?.type || "*";
+  }
+  const last = node.inputs.at(-1);
+  if ((!last || last.link != null) && node.inputs.length < MAX_PIPE_SLOTS) {
+    node.addInput(`value_${node.inputs.length + 1}`, "*");
+  }
+  finishLayout(node);
+  const links = node.outputs?.[0]?.links || [];
+  for (const linkId of links) {
+    const link = node.graph?.links?.[linkId];
+    const target = link && node.graph.getNodeById(link.target_id);
+    if (isNode(target, PIPE_OUT)) syncPipeOut(target);
+  }
+}
+
+function pipeSource(node) {
+  const pipeInput = node.inputs?.find((input) => input.name === "pipe");
+  if (!pipeInput || pipeInput.link == null) return null;
+  const link = node.graph?.links?.[pipeInput.link];
+  const origin = link && node.graph.getNodeById(link.origin_id);
+  return isNode(origin, PIPE_IN) ? origin : null;
+}
+
+function syncPipeOut(node) {
+  const source = pipeSource(node);
+  const entries = source?.inputs?.filter((input) => input.link != null) ?? [];
+  while (node.outputs.length > entries.length) {
+    const last = node.outputs.at(-1);
+    if (last.links?.length) break;
+    node.removeOutput(node.outputs.length - 1);
+  }
+  while (node.outputs.length < entries.length) {
+    node.addOutput(`value_${node.outputs.length + 1}`, "*");
+  }
+  entries.forEach((input, index) => {
+    const output = linkedOutput(source, input);
+    node.outputs[index].label = labelFor(output, node.outputs[index].name);
+    node.outputs[index].type = output?.type || "*";
+  });
+  // Keep unused output slots harmless but invisible in meaning; do not remove
+  // them automatically because deleting a connected slot would break a saved
+  // workflow.
+  for (let index = entries.length; index < node.outputs.length; index++) {
+    node.outputs[index].label = node.outputs[index].name;
+    node.outputs[index].type = "*";
+  }
+  finishLayout(node);
+}
+
+function installDynamicPipe(node) {
+  const original = node.onConnectionsChange;
+  node.onConnectionsChange = function (...args) {
+    const result = original?.apply(this, args);
+    requestAnimationFrame(() => {
+      if (isNode(node, PIPE_IN)) syncPipeIn(node);
+      if (isNode(node, PIPE_OUT)) syncPipeOut(node);
+    });
+    return result;
+  };
+  requestAnimationFrame(() => {
+    if (isNode(node, PIPE_IN)) syncPipeIn(node);
+    if (isNode(node, PIPE_OUT)) syncPipeOut(node);
+  });
+}
+
 // ComfyUI renders required inputs before optional inputs. previous_latent must
 // remain optional so generation one can leave it unwired, but visually it is
 // the start of every continuation lane.
 app.registerExtension({
   name: "h3-extension-bridge.sampler-input-order",
   nodeCreated(node) {
+    if (isNode(node, PIPE_IN) || isNode(node, PIPE_OUT)) {
+      installDynamicPipe(node);
+      return;
+    }
     if (
       node.type !== "ElvaxH3ExtensionSampler" &&
       node.comfyClass !== "ElvaxH3ExtensionSampler"
@@ -25,4 +123,3 @@ app.registerExtension({
     });
   },
 });
-
