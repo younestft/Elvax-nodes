@@ -133,13 +133,23 @@ app.registerExtension({
     // Optional sockets are added after nodeCreated in the current frontend.
     // Defer one frame, but only for this exact custom-node instance.
     requestAnimationFrame(() => {
-      const index = node.inputs?.findIndex(
+      const previousIndex = node.inputs?.findIndex(
         (input) => input.name === "previous_latent",
       );
-      if (index > 0) {
-        const [previousLatent] = node.inputs.splice(index, 1);
+      if (previousIndex > 0) {
+        const [previousLatent] = node.inputs.splice(previousIndex, 1);
         node.inputs.unshift(previousLatent);
+      }
+      const modelIndex = node.inputs?.findIndex(
+        (input) => input.name === "model",
+      );
+      if (modelIndex > 1) {
+        const [model] = node.inputs.splice(modelIndex, 1);
+        node.inputs.splice(1, 0, model);
+      }
+      if (previousIndex > 0 || modelIndex > 1) {
         node.setSize(node.computeSize());
+        node.graph?.setDirtyCanvas(true, true);
       }
     });
   },
