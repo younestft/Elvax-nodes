@@ -5,7 +5,7 @@ const PIPE_OUT = "ElvaxDynamicPipeOut";
 const MAX_PIPE_SLOTS = 32;
 
 function isNode(node, type) {
-  return node.type === type || node.comfyClass === type;
+  return node?.type === type || node?.comfyClass === type;
 }
 
 function linkedOutput(node, input) {
@@ -100,7 +100,7 @@ function installDynamicPipe(node) {
 // remain optional so generation one can leave it unwired, but visually it is
 // the start of every continuation lane.
 app.registerExtension({
-  name: "h3-extension-bridge.sampler-input-order",
+  name: "elvax.dynamic-pipes-and-sampler-layout",
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== PIPE_IN && nodeData.name !== PIPE_OUT) return;
     const originalCreated = nodeType.prototype.onNodeCreated;
@@ -112,7 +112,11 @@ app.registerExtension({
     };
     nodeType.prototype.onConfigure = function (...args) {
       const result = originalConfigure?.apply(this, args);
-      requestAnimationFrame(() => installDynamicPipe(this));
+      requestAnimationFrame(() => {
+        installDynamicPipe(this);
+        if (isNode(this, PIPE_IN)) syncPipeIn(this);
+        if (isNode(this, PIPE_OUT)) syncPipeOut(this);
+      });
       return result;
     };
   },
