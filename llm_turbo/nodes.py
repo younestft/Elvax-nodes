@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import time
 
+import comfy.model_management
+
 from .llama_cli import MAX_LLAMA_SEED, build_command, run_llama_cli, split_extra_args
 from .model_registry import (
     NO_MMPROJ,
@@ -79,6 +81,7 @@ class LLMTurbo:
         extra_args: str = "",
     ):
         started = time.perf_counter()
+        comfy.model_management.unload_all_models()
         command, cleanup_paths = build_command(
             model_path=full_model_path(model),
             mmproj_path=full_mmproj_path(mmproj),
