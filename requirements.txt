@@ -1,1 +1,2 @@
-lmstudio>=1.5.0,<2
+numpy
+Pillow

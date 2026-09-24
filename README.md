@@ -2,17 +2,16 @@
 
 Custom nodes for ComfyUI.
 
-## LM Studio Prompt Enhancer
+## LLM Turbo
 
-Generates enhanced prompt text with a locally running LM Studio model.
-
-Features:
-
-- Uses an already loaded LM Studio model when `model_key` is empty.
-- Remembers the selected model key so it can reload the model after automatic unloading.
-- Supports temperature, Top K, Top P, seed, token limit, and response timeout controls.
-- Removes LM Studio reasoning fragments and `<think>` / `<thinking>` blocks.
-- Cancels timed-out generation streams and can unload the model immediately to release VRAM.
+Runs local GGUF language and vision models through llama.cpp. Select a model from
+ComfyUI's configured `LLM` or `text_encoders` folders. For image batches, connect
+`images` and select a matching `mmproj`. Enter separate `system_prompt` and
+`user_prompt` text; `context_window_size` sits directly below the user prompt.
+The `stats` output includes total node execution time and llama.cpp speed figures
+when available. GPU and CPU layer placement use llama.cpp defaults. On supported
+Windows CUDA systems, the node can download its pinned llama.cpp release if a
+matching local binary is not already available.
 
 ## H3 Extension Sampler
 
@@ -43,9 +42,8 @@ Install the Python dependency with the Python environment used by ComfyUI:
 python -m pip install -r ComfyUI/custom_nodes/Elvax-nodes/requirements.txt
 ```
 
-Restart ComfyUI. The node appears under the `Elvax` category as **LM Studio Prompt Enhancer**.
+Restart ComfyUI. The nodes appear under the `Elvax` category.
 
-LM Studio must be open with its local API server enabled. On the first run with an empty `model_key`, load a model in LM Studio; the node will remember that model for subsequent runs in the same ComfyUI session.
 
 ## License and credits
 
@@ -56,4 +54,7 @@ The H3 Extension Sampler is a modified derivative of
 by NikoDemon80. It retains GPL-licensed H3 layout checks, latent-tail slicing,
 and timeline-aligned audio-continuation logic.
 
-The LM Studio integration behavior is based on the MIT-licensed work from [comfyui-lmstudio-image-to-text-node](https://github.com/mattjohnpowell/comfyui-lmstudio-image-to-text-node) by Matt John Powell. See [LICENSE](LICENSE).
+LLM Turbo is adapted from the GPL-3.0-licensed
+[ComfyUI-LLM-text-processor](https://github.com/KingManiya/ComfyUI-LLM-text-processor)
+by KingManiya. It retains the GGUF llama.cpp invocation, image conversion, and
+response parsing, with Elvax-specific inputs, model discovery, and timing output.
