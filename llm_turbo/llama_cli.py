@@ -134,6 +134,11 @@ def build_command(
 
     if extra_args:
         command.extend(extra_args)
+
+    # LLM Turbo starts a fresh llama-cli process for every run, so prompt
+    # context checkpoints cannot be reused across runs. Disable them; this
+    # also avoids excess checkpoint memory use reported with Gemma 4.
+    command.extend(["--ctx-checkpoints", "0"])
     return command, tuple(cleanup_paths)
 
 
