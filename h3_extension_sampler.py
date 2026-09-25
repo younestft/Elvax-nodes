@@ -53,6 +53,7 @@ from comfy_extras.nodes_custom_sampler import (
     Noise_RandomNoise,
     SamplerCustomAdvanced,
 )
+from comfy_extras.nodes_audio import vae_decode_audio
 
 try:
     from safetensors.torch import load_file as _st_load, save_file as _st_save
@@ -103,6 +104,12 @@ AUDIO_HZ = 40.0
 # but the snap-down logic knows the higher points so an out-of-range
 # request lands on the nearest real one instead of being clamped to 39.
 VIDEO_RUN_GRID = (124, 107, 90, 73, 56, 39, 22, 5, 1)
+SAMPLER_CONTEXT_GRID = (5, 22, 39, 56)
+SAMPLER_TRANSITION_MODES = (
+    "Full Latent Extension",
+    "Visual Guide Only",
+    "Hard Cut",
+)
 
 # Settings that used to be widgets. Each had exactly one right answer, so
 # offering the wrong one was noise. The losing branches are still in the
@@ -207,6 +214,20 @@ def _video_from_latent(latent):
         raise ValueError("h3_motion_context: expected video latent [B,C,T,H,W], "
                          "got shape %s" % (tuple(video.shape),))
     return video
+
+
+def _decode_video_frames(video_vae, video_latent, label):
+    """Decode an H3 video latent into ComfyUI's frame-batch IMAGE shape."""
+    images = video_vae.decode(video_latent)
+    if images.ndim == 5:
+        images = images.reshape(
+            -1, images.shape[-3], images.shape[-2], images.shape[-1])
+    elif images.ndim != 4:
+        raise ValueError(
+            "h3_extension_sampler: %s video VAE returned decoded images with "
+            "shape %s; expected [B,T,H,W,C] or [T,H,W,C]."
+            % (label, tuple(images.shape)))
+    return images
 
 
 def _steps_for_frames(n):
@@ -1379,8 +1400,34 @@ class H3ExtensionLatentTrim:
                 "h3_extension_bridge: %s video/audio batch sizes differ." % label)
         return video, audio
 
-    def trim_latent(self, latent, trim_frames=0, previous_latent=None):
-        current_video, current_audio = self._streams(latent, "latent")
+    @classmethod
+    def _compatible_streams(cls, latent, previous_latent):
+        current_video, current_audio = cls._streams(latent, "latent")
+        previous_video, previous_audio = cls._streams(
+            previous_latent, "previous_latent")
+        if (previous_video.shape[0] != current_video.shape[0] or
+                tuple(previous_video.shape[1:2]) != tuple(current_video.shape[1:2]) or
+                tuple(previous_video.shape[3:]) != tuple(current_video.shape[3:]) or
+                previous_audio.shape[0] != current_audio.shape[0] or
+                tuple(previous_audio.shape[1:3]) != tuple(current_audio.shape[1:3])):
+            raise ValueError(
+                "h3_extension_bridge: H3 latent layouts differ between stages. "
+                "Keep all generations at one resolution and batch size.")
+        return current_video, current_audio, previous_video, previous_audio
+
+    @classmethod
+    def validate_compatible(cls, latent, previous_latent):
+        """Fail before sampling when two stages cannot form one latent chain."""
+        cls._compatible_streams(latent, previous_latent)
+
+    def trim_latent(self, latent, trim_frames=0, previous_latent=None,
+                    hard_cut=False):
+        previous_video = previous_audio = None
+        if previous_latent is None:
+            current_video, current_audio = self._streams(latent, "latent")
+        else:
+            (current_video, current_audio, previous_video,
+             previous_audio) = self._compatible_streams(latent, previous_latent)
         n = max(0, int(trim_frames))
         # H3's VAE temporal grid is 5, 22, 39... pixel frames -> 2, 7, 12...
         # latent steps. Unlike image trimming, this must be exact: a partial
@@ -1401,16 +1448,27 @@ class H3ExtensionLatentTrim:
         if previous_latent is None:
             chain_video, chain_audio = current_video, current_audio
         else:
-            previous_video, previous_audio = self._streams(
-                previous_latent, "previous_latent")
-            if (previous_video.shape[0] != current_video.shape[0] or
-                    tuple(previous_video.shape[1:2]) != tuple(current_video.shape[1:2]) or
-                    tuple(previous_video.shape[3:]) != tuple(current_video.shape[3:]) or
-                    previous_audio.shape[0] != current_audio.shape[0] or
-                    tuple(previous_audio.shape[1:3]) != tuple(current_audio.shape[1:3])):
-                raise ValueError(
-                    "h3_extension_bridge: H3 latent layouts differ between stages. "
-                    "Keep all generations at one resolution and batch size.")
+            if hard_cut:
+                # Video was trimmed by the first two latent steps (5 frames).
+                # Since audio runs at 40 Hz and video at 24 fps, the required
+                # audio trim can be 8 or 9 latent steps after cumulative
+                # rounding. Start with the ordinary 8-step trim above, then
+                # apply one extra leading audio step if needed.
+                chain_frames = _pixel_frames(
+                    int(previous_video.shape[2] + current_video.shape[2]))
+                target_audio_steps = int(round(
+                    chain_frames / float(FPS) * AUDIO_HZ))
+                extra_audio_steps = (
+                    int(previous_audio.shape[-1] + current_audio.shape[-1])
+                    - target_audio_steps)
+                if extra_audio_steps not in (0, 1):
+                    raise ValueError(
+                        "h3_extension_sampler: cannot align the Hard Cut audio "
+                        "latent to the combined video timeline (extra trim %d)."
+                        % extra_audio_steps)
+                if extra_audio_steps:
+                    current_audio = current_audio[..., extra_audio_steps:].clone()
+
             chain_video = torch.cat((previous_video, current_video), dim=2)
             chain_audio = torch.cat((previous_audio, current_audio), dim=-1)
 
@@ -1420,16 +1478,17 @@ class H3ExtensionLatentTrim:
 
 
 class H3ExtensionSampler:
-    """One H3 continuation lane: bridge, guide, sample, then latent-trim."""
+    """Sample one H3 stage using the selected transition and return its preview."""
 
     CATEGORY = "sampling/minimax"
-    RETURN_TYPES = ("LATENT",)
-    RETURN_NAMES = ("chain_latent",)
+    RETURN_TYPES = ("LATENT", "IMAGE", "AUDIO")
+    RETURN_NAMES = ("chain_latent", "preview_images", "preview_audio")
     FUNCTION = "sample_extension"
-    DESCRIPTION = ("Run an H3 extension in one node: seamless context bridge, "
-                   "BasicGuider, SamplerCustomAdvanced, and latent-only overlap "
-                   "trim. chain_latent is the complete chain for the next node or "
-                   "a single final decode.")
+    DESCRIPTION = ("Run an H3 stage with Full Latent Extension, Visual Guide Only, "
+                   "or Hard Cut. chain_latent accumulates the complete chain; "
+                   "preview_images and preview_audio contain this stage only. "
+                   "Hard Cut trims the new stage's first 5 frames at each join "
+                   "to keep the combined H3 latent on its decode grid.")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1444,15 +1503,20 @@ class H3ExtensionSampler:
                 "latent": ("LATENT", {
                     "tooltip": "This generation's base H3 AV latent."}),
                 "video_vae": ("VAE", {
-                    "tooltip": "The H3 video VAE used to anchor the context."}),
+                    "tooltip": "The H3 video VAE used for context and stage preview."}),
+                "audio_vae": ("VAE", {
+                    "tooltip": "The H3 audio VAE used to decode this stage's preview."}),
+                "transition_mode": (list(SAMPLER_TRANSITION_MODES), {
+                    "default": "Full Latent Extension",
+                    "tooltip": "Hover over this control to see what the selected mode does."}),
                 "video_context_length": ("INT", {
-                    "default": 22, "min": 5, "max": 56, "step": 1,
-                    "tooltip": "Previous video frames pinned at the head of this "
-                               "generation. 22 is the recommended seamless setting."}),
+                    "default": 22, "min": 5, "max": 56, "step": 17,
+                    "tooltip": "Used by Full Latent Extension and Visual Guide Only. "
+                               "H3's supported context grid is 5, 22, 39, or 56."}),
                 "audio_context_length": ("INT", {
                     "default": 24, "min": 0, "max": 240, "step": 1,
-                    "tooltip": "Previous audio-frame context; 24 is one second "
-                               "at H3's 24 fps."}),
+                    "tooltip": "Used only by Full Latent Extension; 24 is one "
+                               "second at H3's 24 fps."}),
                 "seed": ("INT", {
                     "default": 0, "min": 0, "max": 0xffffffffffffffff,
                     "control_after_generate": True,
@@ -1464,20 +1528,67 @@ class H3ExtensionSampler:
             },
         }
 
-    def sample_extension(self, model, conditioning, latent, video_vae, seed,
-                         sampler, sigmas, video_context_length=22,
-                         audio_context_length=24, previous_latent=None):
+    @staticmethod
+    def _visual_guide_frames(previous_latent, video_vae, context_length):
+        previous_video = _video_from_latent(previous_latent)
+        available = _pixel_frames(int(previous_video.shape[2]))
+        requested = int(context_length)
+        if requested < min(SAMPLER_CONTEXT_GRID):
+            raise ValueError(
+                "h3_extension_sampler: Visual Guide Only requires a video "
+                "context length of at least 5 frames.")
+
+        usable = min(requested, available)
+        usable = max((n for n in SAMPLER_CONTEXT_GRID if n <= usable), default=0)
+        if usable < 1:
+            raise ValueError(
+                "h3_extension_sampler: the previous latent has fewer than "
+                "5 frames available for Visual Guide Only.")
+
+        blocks, _, covered = _video_tail_from_latent(previous_latent, usable)
+        previous_tail = torch.cat(blocks, dim=2)
+        guide_frames = _decode_video_frames(
+            video_vae, previous_tail, "previous latent")
+        return guide_frames, covered
+
+    def sample_extension(self, model, conditioning, latent, video_vae,
+                         audio_vae, seed, sampler, sigmas, video_context_length=22,
+                         audio_context_length=24,
+                         transition_mode="Full Latent Extension",
+                         previous_latent=None):
+        if transition_mode not in SAMPLER_TRANSITION_MODES:
+            raise ValueError(
+                "h3_extension_sampler: unknown transition mode %r. Choose one "
+                "of %s." % (transition_mode, ", ".join(SAMPLER_TRANSITION_MODES)))
+
         trim_frames = 0
         bridged_conditioning = conditioning
         if previous_latent is not None:
-            bridged_conditioning, _unused_latent, trim_frames = H3ExtensionBridge().bridge(
-                previous_latent=previous_latent,
-                conditioning=conditioning,
-                latent=latent,
-                video_vae=video_vae,
-                context_length=video_context_length,
-                audio_context_length=audio_context_length,
-            )
+            H3ExtensionLatentTrim.validate_compatible(latent, previous_latent)
+            if transition_mode == "Full Latent Extension":
+                bridged_conditioning, latent, trim_frames = H3ExtensionBridge().bridge(
+                    previous_latent=previous_latent,
+                    conditioning=conditioning,
+                    latent=latent,
+                    video_vae=video_vae,
+                    context_length=video_context_length,
+                    audio_context_length=audio_context_length,
+                )
+            elif transition_mode == "Visual Guide Only":
+                guide_frames, guide_length = self._visual_guide_frames(
+                    previous_latent, video_vae, video_context_length)
+                bridged_conditioning, trim_frames = MiniMaxH3MotionContext().apply(
+                    conditioning=conditioning,
+                    vae=video_vae,
+                    latent=latent,
+                    context_length=guide_length,
+                    context_frames=guide_frames,
+                )
+            elif transition_mode == "Hard Cut":
+                # A standalone clip's first 5 frames occupy the H3 VAE's
+                # two-token startup window. Skip that window at the join so
+                # this latent's temporal phase matches the accumulated chain.
+                trim_frames = 5
 
         guider = Guider_Basic(model)
         guider.set_conds(bridged_conditioning)
@@ -1485,15 +1596,32 @@ class H3ExtensionSampler:
         sampled_latent = SamplerCustomAdvanced.sample(
             noise, guider, sampler, sigmas, latent)[0]
 
+        sampled_video, sampled_audio = H3ExtensionLatentTrim._streams(
+            sampled_latent, "sampled_latent")
+        preview_images = _decode_video_frames(
+            video_vae, sampled_video, "sampled")
+        preview_audio = vae_decode_audio(
+            audio_vae, {"samples": sampled_audio})
+        preview_images, preview_audio = MiniMaxH3MotionContextTrim().trim(
+            images=preview_images,
+            trim_frames=trim_frames,
+            audio=preview_audio,
+            fps=FPS,
+            match_tail=True,
+        )
+
         trimmer = H3ExtensionLatentTrim()
         if previous_latent is None:
-            return trimmer.trim_latent(sampled_latent, trim_frames)
-        chain_latent = trimmer.trim_latent(
-            sampled_latent, trim_frames, previous_latent)[0]
-        return (chain_latent,)
+            chain_latent = trimmer.trim_latent(sampled_latent, trim_frames)[0]
+        else:
+            chain_latent = trimmer.trim_latent(
+                sampled_latent,
+                trim_frames,
+                previous_latent,
+                hard_cut=transition_mode == "Hard Cut",
+            )[0]
+        return (chain_latent, preview_images, preview_audio)
 
 
 NODE_CLASS_MAPPINGS = {"H3ExtensionSampler": H3ExtensionSampler}
 NODE_DISPLAY_NAME_MAPPINGS = {"H3ExtensionSampler": "H3 Extension Sampler"}
-
-
