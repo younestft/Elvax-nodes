@@ -5,6 +5,10 @@ const PIPE_OUT = "ElvaxDynamicPipeOut";
 const MAX_PIPE_SLOTS = 32;
 const PIPE_DEFAULT_WIDTH = 260;
 const TRANSITION_MODE_TOOLTIPS = {
+  "motion context":
+    "Continues from the previous stage's latent context.",
+  "hard cut":
+    "Skips the new stage's first 5 frames at the join; this is a latent-space cut.",
   "Full Latent Extension":
     "Carries the previous stage's H3 video and audio latents as continuation context. The repeated head is trimmed before this stage is appended.",
   "Visual Guide Only":
@@ -24,8 +28,99 @@ function linkedOutput(node, input) {
   return origin?.outputs?.[link.origin_slot] ?? null;
 }
 
+function linkedOrigin(node, input) {
+  if (input.link == null) return null;
+  const link = node.graph?.links?.[input.link];
+  return link ? node.graph?.getNodeById(link.origin_id) ?? null : null;
+}
+
 function labelFor(output, fallback) {
   return output?.label || output?.name || fallback;
+}
+
+function frontendGetName(node) {
+  if (node?.type !== "GetNode" && node?.comfyClass !== "GetNode") return null;
+  const widget = node.widgets?.find((item) => item.name === "Constant")
+    || node.widgets?.[0];
+  const value = typeof widget?.value === "string" ? widget.value.trim() : "";
+  return value || null;
+}
+
+function connectedValueLabel(node, input, fallback) {
+  const source = linkedOrigin(node, input);
+  return frontendGetName(source) || labelFor(linkedOutput(node, input), fallback);
+}
+
+function refreshPipeLabelsFromGetNode(getNode) {
+  for (const linkId of getNode.outputs?.[0]?.links || []) {
+    const link = getNode.graph?.links?.[linkId];
+    const target = link && getNode.graph?.getNodeById(link.target_id);
+    if (isNode(target, PIPE_IN)) syncPipeIn(target);
+  }
+}
+
+function installGetNodeLabelSync(node) {
+  if (node.__elvaxGetLabelSyncInstalled) return;
+  node.__elvaxGetLabelSyncInstalled = true;
+
+  const widget = node.widgets?.find((item) => item.name === "Constant")
+    || node.widgets?.[0];
+  if (widget) {
+    const originalCallback = widget.callback;
+    widget.callback = function (...args) {
+      const result = originalCallback?.apply(this, args);
+      requestAnimationFrame(() => refreshPipeLabelsFromGetNode(node));
+      return result;
+    };
+  }
+
+  const originalRename = node.onRename;
+  if (originalRename) {
+    node.onRename = function (...args) {
+      const result = originalRename.apply(this, args);
+      requestAnimationFrame(() => refreshPipeLabelsFromGetNode(node));
+      return result;
+    };
+  }
+
+  const originalConfigure = node.onConfigure;
+  if (originalConfigure) {
+    node.onConfigure = function (...args) {
+      const result = originalConfigure.apply(this, args);
+      setTimeout(() => refreshPipeLabelsFromGetNode(node), 0);
+      return result;
+    };
+  }
+
+  const originalConnectionsChange = node.onConnectionsChange;
+  node.onConnectionsChange = function (...args) {
+    const result = originalConnectionsChange?.apply(this, args);
+    requestAnimationFrame(() => refreshPipeLabelsFromGetNode(node));
+    return result;
+  };
+  requestAnimationFrame(() => refreshPipeLabelsFromGetNode(node));
+}
+
+function installDurationControls(node) {
+  const duration = node.widgets?.find((item) => item.name === "duration_s");
+  const useInitial = node.widgets?.find(
+    (item) => item.name === "use_initial_duration",
+  );
+  if (!useInitial || !duration) return;
+  const updateDisabled = () => {
+    duration.disabled = Boolean(useInitial.value);
+    node.graph?.setDirtyCanvas(true, true);
+  };
+  if (!useInitial.__elvaxDurationToggleInstalled) {
+    useInitial.__elvaxDurationToggleInstalled = true;
+    const originalCallback = useInitial.callback;
+    useInitial.callback = function (...args) {
+      const result = originalCallback?.apply(this, args);
+      updateDisabled();
+      return result;
+    };
+  }
+  updateDisabled();
 }
 
 function finishLayout(node) {
@@ -38,9 +133,20 @@ function finishLayout(node) {
 
 function syncPipeIn(node) {
   node.inputs ??= [];
+  // Keep connected sockets plus one trailing free socket. This also cleans
+  // up excess auto-grown sockets after users disconnect values.
+  for (let index = node.inputs.length - 1; index >= 0; index--) {
+    if (node.inputs[index].link == null) node.removeInput(index);
+  }
+  node.inputs.forEach((input, index) => {
+    input.name = `value_${index + 1}`;
+  });
+  if (node.inputs.length < MAX_PIPE_SLOTS) {
+    node.addInput(`value_${node.inputs.length + 1}`, "*");
+  }
   for (const input of node.inputs) {
     const output = linkedOutput(node, input);
-    input.label = labelFor(output, input.name);
+    input.label = connectedValueLabel(node, input, input.name);
     input.type = output?.type || "*";
   }
   const last = node.inputs.at(-1);
@@ -77,7 +183,11 @@ function syncPipeOut(node) {
   }
   entries.forEach((input, index) => {
     const output = linkedOutput(source, input);
-    node.outputs[index].label = labelFor(output, node.outputs[index].name);
+    node.outputs[index].label = connectedValueLabel(
+      source,
+      input,
+      node.outputs[index].name,
+    );
     node.outputs[index].type = output?.type || "*";
   });
   // Keep unused output slots harmless but invisible in meaning; do not remove
@@ -172,11 +282,18 @@ function installTransitionModeTooltip(node) {
   const updateTooltip = () => {
     widget.tooltip = TRANSITION_MODE_TOOLTIPS[widget.value]
       || "Choose how this H3 stage relates to the preceding stage.";
+    const isReferenceSampler =
+      node.type === "ElvaxH3ExtensionReferenceSampler" ||
+      node.comfyClass === "ElvaxH3ExtensionReferenceSampler";
     if (videoContext) {
-      videoContext.disabled = widget.value === "Hard Cut";
+      videoContext.disabled = isReferenceSampler
+        ? widget.value === "hard cut"
+        : widget.value === "Hard Cut";
     }
     if (audioContext) {
-      audioContext.disabled = widget.value !== "Full Latent Extension";
+      audioContext.disabled = isReferenceSampler
+        ? widget.value === "hard cut"
+        : widget.value !== "Full Latent Extension";
     }
     node.graph?.setDirtyCanvas(true, true);
   };
@@ -214,10 +331,18 @@ app.registerExtension({
     };
   },
   nodeCreated(node) {
-    if (
-      node.type !== "ElvaxH3ExtensionSampler" &&
-      node.comfyClass !== "ElvaxH3ExtensionSampler"
-    ) return;
+    if (node.type === "GetNode" || node.comfyClass === "GetNode") {
+      installGetNodeLabelSync(node);
+      return;
+    }
+
+    const isSampler =
+      node.type === "ElvaxH3ExtensionSampler" ||
+      node.comfyClass === "ElvaxH3ExtensionSampler";
+    const isReferenceSampler =
+      node.type === "ElvaxH3ExtensionReferenceSampler" ||
+      node.comfyClass === "ElvaxH3ExtensionReferenceSampler";
+    if (!isSampler && !isReferenceSampler) return;
 
     if (!node.__elvaxSamplerConfigureHook) {
       node.__elvaxSamplerConfigureHook = true;
@@ -228,6 +353,7 @@ app.registerExtension({
           const before = this.inputs?.slice();
           reorderSamplerInputs(this);
           installTransitionModeTooltip(this);
+          installDurationControls(this);
           if (before && before.some((input, index) => input !== this.inputs[index])) {
             this.setSize(this.computeSize());
             this.graph?.setDirtyCanvas(true, true);
@@ -243,6 +369,7 @@ app.registerExtension({
       const before = node.inputs?.slice();
       reorderSamplerInputs(node);
       installTransitionModeTooltip(node);
+      installDurationControls(node);
       if (before && before.some((input, index) => input !== node.inputs[index])) {
         node.setSize(node.computeSize());
         node.graph?.setDirtyCanvas(true, true);
