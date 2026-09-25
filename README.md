@@ -13,6 +13,13 @@ when available. GPU and CPU layer placement use llama.cpp defaults. On supported
 Windows CUDA systems, the node can download its pinned llama.cpp release if a
 matching local binary is not already available.
 
+## Dynamic Pipe In / Dynamic Pipe Out
+
+Organize multiple connections as one cable. Dynamic Pipe In begins with one
+input and adds the next empty input when a value is connected. Dynamic Pipe Out
+then creates matching named outputs when the pipe is connected. The nodes carry
+data only; they do not alter the values or improve inference performance.
+
 ## H3 Custom Extension Sampler
 
 A single-node MiniMax H3 generation lane. Each instance keeps its own LoRA-fed
@@ -55,13 +62,6 @@ frontend alias in the local Prompt IDE installation.
 
 Audio slots 1-3 pair with the matching video slot when that video is connected;
 otherwise they act as standalone audio. Slots 4-6 are standalone audio.
-
-## Dynamic Pipe In / Dynamic Pipe Out
-
-Organize multiple connections as one cable. Dynamic Pipe In begins with one
-input and adds the next empty input when a value is connected. Dynamic Pipe Out
-then creates matching named outputs when the pipe is connected. The nodes carry
-data only; they do not alter the values or improve inference performance.
 
 ## Installation
 
