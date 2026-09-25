@@ -53,7 +53,6 @@ from comfy_extras.nodes_custom_sampler import (
     Noise_RandomNoise,
     SamplerCustomAdvanced,
 )
-from comfy_extras.nodes_audio import vae_decode_audio
 
 try:
     from safetensors.torch import load_file as _st_load, save_file as _st_save
@@ -106,9 +105,8 @@ AUDIO_HZ = 40.0
 VIDEO_RUN_GRID = (124, 107, 90, 73, 56, 39, 22, 5, 1)
 SAMPLER_CONTEXT_GRID = (5, 22, 39, 56)
 SAMPLER_TRANSITION_MODES = (
-    "Full Latent Extension",
-    "Visual Guide Only",
-    "Hard Cut",
+    "motion context",
+    "hard cut",
 )
 
 # Settings that used to be widgets. Each had exactly one right answer, so
@@ -1420,8 +1418,9 @@ class H3ExtensionLatentTrim:
         """Fail before sampling when two stages cannot form one latent chain."""
         cls._compatible_streams(latent, previous_latent)
 
-    def trim_latent(self, latent, trim_frames=0, previous_latent=None,
-                    hard_cut=False):
+    def trim_latent_and_stage(self, latent, trim_frames=0, previous_latent=None,
+                              hard_cut=False):
+        """Return both the accumulated chain and this stage's trimmed latent."""
         previous_video = previous_audio = None
         if previous_latent is None:
             current_video, current_audio = self._streams(latent, "latent")
@@ -1446,7 +1445,10 @@ class H3ExtensionLatentTrim:
         current_audio = current_audio[..., audio_steps:].clone()
 
         if previous_latent is None:
-            chain_video, chain_audio = current_video, current_audio
+            stage = dict(latent)
+            stage["samples"] = comfy.nested_tensor.NestedTensor(
+                (current_video, current_audio))
+            chain = stage
         else:
             if hard_cut:
                 # Video was trimmed by the first two latent steps (5 frames).
@@ -1469,26 +1471,33 @@ class H3ExtensionLatentTrim:
                 if extra_audio_steps:
                     current_audio = current_audio[..., extra_audio_steps:].clone()
 
+            stage = dict(latent)
+            stage["samples"] = comfy.nested_tensor.NestedTensor(
+                (current_video, current_audio))
             chain_video = torch.cat((previous_video, current_video), dim=2)
             chain_audio = torch.cat((previous_audio, current_audio), dim=-1)
+            chain = dict(latent)
+            chain["samples"] = comfy.nested_tensor.NestedTensor(
+                (chain_video, chain_audio))
+        return chain, stage
 
-        chain = dict(latent)
-        chain["samples"] = comfy.nested_tensor.NestedTensor((chain_video, chain_audio))
+    def trim_latent(self, latent, trim_frames=0, previous_latent=None,
+                    hard_cut=False):
+        chain, _stage = self.trim_latent_and_stage(
+            latent, trim_frames, previous_latent, hard_cut)
         return (chain,)
 
 
 class H3ExtensionSampler:
-    """Sample one H3 stage using the selected transition and return its preview."""
+    """Sample one H3 stage and return the accumulated and stage-only latents."""
 
     CATEGORY = "sampling/minimax"
-    RETURN_TYPES = ("LATENT", "IMAGE", "AUDIO")
-    RETURN_NAMES = ("chain_latent", "preview_images", "preview_audio")
+    RETURN_TYPES = ("LATENT", "LATENT")
+    RETURN_NAMES = ("chain_latent", "stage_latent")
     FUNCTION = "sample_extension"
-    DESCRIPTION = ("Run an H3 stage with Full Latent Extension, Visual Guide Only, "
-                   "or Hard Cut. chain_latent accumulates the complete chain; "
-                   "preview_images and preview_audio contain this stage only. "
-                   "Hard Cut trims the new stage's first 5 frames at each join "
-                   "to keep the combined H3 latent on its decode grid.")
+    DESCRIPTION = ("Sample an H3 stage without decoding. chain_latent accumulates "
+                   "the full sequence; stage_latent contains only this stage "
+                   "after removing its transition overlap.")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1502,59 +1511,31 @@ class H3ExtensionSampler:
                 "conditioning": ("CONDITIONING",),
                 "latent": ("LATENT", {
                     "tooltip": "This generation's base H3 AV latent."}),
-                "video_vae": ("VAE", {
-                    "tooltip": "The H3 video VAE used for context and stage preview."}),
-                "audio_vae": ("VAE", {
-                    "tooltip": "The H3 audio VAE used to decode this stage's preview."}),
-                "transition_mode": (list(SAMPLER_TRANSITION_MODES), {
-                    "default": "Full Latent Extension",
-                    "tooltip": "Hover over this control to see what the selected mode does."}),
-                "video_context_length": ("INT", {
-                    "default": 22, "min": 5, "max": 56, "step": 17,
-                    "tooltip": "Used by Full Latent Extension and Visual Guide Only. "
-                               "H3's supported context grid is 5, 22, 39, or 56."}),
-                "audio_context_length": ("INT", {
-                    "default": 24, "min": 0, "max": 240, "step": 1,
-                    "tooltip": "Used only by Full Latent Extension; 24 is one "
-                               "second at H3's 24 fps."}),
+                "sampler": ("SAMPLER",),
+                "sigmas": ("SIGMAS",),
                 "seed": ("INT", {
                     "default": 0, "min": 0, "max": 0xffffffffffffffff,
                     "control_after_generate": True,
                     "tooltip": "Random-noise seed for this generation. It is "
-                               "independent for every H3 Extension Sampler."}),
-                "sampler": ("SAMPLER",),
-                "sigmas": ("SIGMAS",),
+                               "independent for every H3 Custom Extension Sampler."}),
+                "transition_mode": (list(SAMPLER_TRANSITION_MODES), {
+                    "default": "motion context",
+                    "tooltip": "Hover over this control to see what the selected mode does."}),
+                "video_context_length": ("INT", {
+                    "default": 22, "min": 5, "max": 56, "step": 17,
+                    "tooltip": "Used by motion context mode. "
+                               "H3's supported context grid is 5, 22, 39, or 56."}),
+                "audio_context_length": ("INT", {
+                    "default": 24, "min": 0, "max": 240, "step": 1,
+                    "tooltip": "Used by motion context mode; 24 is one "
+                               "second at H3's 24 fps."}),
                 "model": ("MODEL",),
             },
         }
 
-    @staticmethod
-    def _visual_guide_frames(previous_latent, video_vae, context_length):
-        previous_video = _video_from_latent(previous_latent)
-        available = _pixel_frames(int(previous_video.shape[2]))
-        requested = int(context_length)
-        if requested < min(SAMPLER_CONTEXT_GRID):
-            raise ValueError(
-                "h3_extension_sampler: Visual Guide Only requires a video "
-                "context length of at least 5 frames.")
-
-        usable = min(requested, available)
-        usable = max((n for n in SAMPLER_CONTEXT_GRID if n <= usable), default=0)
-        if usable < 1:
-            raise ValueError(
-                "h3_extension_sampler: the previous latent has fewer than "
-                "5 frames available for Visual Guide Only.")
-
-        blocks, _, covered = _video_tail_from_latent(previous_latent, usable)
-        previous_tail = torch.cat(blocks, dim=2)
-        guide_frames = _decode_video_frames(
-            video_vae, previous_tail, "previous latent")
-        return guide_frames, covered
-
-    def sample_extension(self, model, conditioning, latent, video_vae,
-                         audio_vae, seed, sampler, sigmas, video_context_length=22,
-                         audio_context_length=24,
-                         transition_mode="Full Latent Extension",
+    def sample_extension(self, model, conditioning, latent, sampler, sigmas,
+                         seed, transition_mode="motion context",
+                         video_context_length=22, audio_context_length=24,
                          previous_latent=None):
         if transition_mode not in SAMPLER_TRANSITION_MODES:
             raise ValueError(
@@ -1565,26 +1546,16 @@ class H3ExtensionSampler:
         bridged_conditioning = conditioning
         if previous_latent is not None:
             H3ExtensionLatentTrim.validate_compatible(latent, previous_latent)
-            if transition_mode == "Full Latent Extension":
+            if transition_mode == "motion context":
                 bridged_conditioning, latent, trim_frames = H3ExtensionBridge().bridge(
                     previous_latent=previous_latent,
                     conditioning=conditioning,
                     latent=latent,
-                    video_vae=video_vae,
+                    video_vae=None,
                     context_length=video_context_length,
                     audio_context_length=audio_context_length,
                 )
-            elif transition_mode == "Visual Guide Only":
-                guide_frames, guide_length = self._visual_guide_frames(
-                    previous_latent, video_vae, video_context_length)
-                bridged_conditioning, trim_frames = MiniMaxH3MotionContext().apply(
-                    conditioning=conditioning,
-                    vae=video_vae,
-                    latent=latent,
-                    context_length=guide_length,
-                    context_frames=guide_frames,
-                )
-            elif transition_mode == "Hard Cut":
+            elif transition_mode == "hard cut":
                 # A standalone clip's first 5 frames occupy the H3 VAE's
                 # two-token startup window. Skip that window at the join so
                 # this latent's temporal phase matches the accumulated chain.
@@ -1596,32 +1567,15 @@ class H3ExtensionSampler:
         sampled_latent = SamplerCustomAdvanced.sample(
             noise, guider, sampler, sigmas, latent)[0]
 
-        sampled_video, sampled_audio = H3ExtensionLatentTrim._streams(
-            sampled_latent, "sampled_latent")
-        preview_images = _decode_video_frames(
-            video_vae, sampled_video, "sampled")
-        preview_audio = vae_decode_audio(
-            audio_vae, {"samples": sampled_audio})
-        preview_images, preview_audio = MiniMaxH3MotionContextTrim().trim(
-            images=preview_images,
-            trim_frames=trim_frames,
-            audio=preview_audio,
-            fps=FPS,
-            match_tail=True,
-        )
-
         trimmer = H3ExtensionLatentTrim()
-        if previous_latent is None:
-            chain_latent = trimmer.trim_latent(sampled_latent, trim_frames)[0]
-        else:
-            chain_latent = trimmer.trim_latent(
-                sampled_latent,
-                trim_frames,
-                previous_latent,
-                hard_cut=transition_mode == "Hard Cut",
-            )[0]
-        return (chain_latent, preview_images, preview_audio)
+        chain_latent, stage_latent = trimmer.trim_latent_and_stage(
+            sampled_latent,
+            trim_frames,
+            previous_latent,
+            hard_cut=transition_mode == "hard cut" and previous_latent is not None,
+        )
+        return (chain_latent, stage_latent)
 
 
 NODE_CLASS_MAPPINGS = {"H3ExtensionSampler": H3ExtensionSampler}
-NODE_DISPLAY_NAME_MAPPINGS = {"H3ExtensionSampler": "H3 Extension Sampler"}
+NODE_DISPLAY_NAME_MAPPINGS = {"H3ExtensionSampler": "H3 Custom Extension Sampler"}

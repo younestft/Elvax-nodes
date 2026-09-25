@@ -13,25 +13,22 @@ when available. GPU and CPU layer placement use llama.cpp defaults. On supported
 Windows CUDA systems, the node can download its pinned llama.cpp release if a
 matching local binary is not already available.
 
-## H3 Extension Sampler
+## H3 Custom Extension Sampler
 
 A single-node MiniMax H3 generation lane. Each instance keeps its own LoRA-fed
-model, sampler, sigmas, and seed. Its **Transition Mode** dropdown offers:
+model, sampler, sigmas, and seed. It does not decode internally and has no VAE
+inputs. Its `transition_mode` dropdown offers:
 
-- `Full Latent Extension`: carries the preceding video and audio latents as
+- `motion context`: carries the preceding video and audio latents as
   continuation context and trims their repeated head.
-- `Visual Guide Only`: decodes and re-encodes the preceding video tail as visual
-  guidance; it does not carry the preceding audio.
-- `Hard Cut`: samples without preceding-stage conditioning and joins with no
+- `hard cut`: samples without preceding-stage conditioning and joins with no
   conditioning overlap. To keep the accumulated H3 latent decodable as one
   stream, it trims the new stage's first 5 video frames at each join.
 
-Hover over the selected transition mode for its explanation. Connect the H3
-video and audio VAEs for its stage preview, and connect `chain_latent` to the
-next sampler's `previous_latent`. `preview_images` and `preview_audio` are
-decoded and trimmed inside the sampler, so each stage can go directly to its
-own Video Combine node. `chain_latent` remains the accumulated stream for the
-next sampler or final decode.
+Hover over `transition_mode` for its explanation. `chain_latent` is the
+accumulated sequence for the next stage; `stage_latent` is this stage alone,
+with its transition overlap removed. Decode either output downstream when
+needed.
 
 ## H3 Reference Samplers
 

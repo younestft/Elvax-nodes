@@ -19,7 +19,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "ElvaxH3ExtensionSampler": "H3 Extension Sampler",
+    "ElvaxH3ExtensionSampler": "H3 Custom Extension Sampler",
     "ElvaxH3ReferenceInputs": "H3 Reference Inputs",
     "ElvaxH3InitialReferenceSampler": "H3 Initial Reference Sampler",
     "ElvaxH3ExtensionReferenceSampler": "H3 Extension Reference Sampler",

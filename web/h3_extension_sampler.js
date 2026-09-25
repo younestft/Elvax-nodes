@@ -9,12 +9,6 @@ const TRANSITION_MODE_TOOLTIPS = {
     "Continues from the previous stage's latent context.",
   "hard cut":
     "Skips the new stage's first 5 frames at the join; this is a latent-space cut.",
-  "Full Latent Extension":
-    "Carries the previous stage's H3 video and audio latents as continuation context. The repeated head is trimmed before this stage is appended.",
-  "Visual Guide Only":
-    "Decodes the previous video tail and re-encodes it as visual guide frames. Prior audio is not carried; the overlap is trimmed to keep audio and video aligned.",
-  "Hard Cut":
-    "Does not use the previous stage for conditioning. It skips this stage's first 5 frames at the join to align H3's latent timing.",
 };
 
 function isNode(node, type) {
@@ -271,7 +265,7 @@ function installTransitionModeTooltip(node) {
   const widget = node.widgets?.find((item) => item.name === "transition_mode");
   if (!widget || widget.__elvaxTransitionTooltipInstalled) return;
 
-  widget.label = "Transition Mode";
+  widget.label = "transition_mode";
   widget.__elvaxTransitionTooltipInstalled = true;
   const videoContext = node.widgets?.find(
     (item) => item.name === "video_context_length",
@@ -280,23 +274,39 @@ function installTransitionModeTooltip(node) {
     (item) => item.name === "audio_context_length",
   );
   const updateTooltip = () => {
-    widget.tooltip = TRANSITION_MODE_TOOLTIPS[widget.value]
-      || "Choose how this H3 stage relates to the preceding stage.";
-    const isReferenceSampler =
-      node.type === "ElvaxH3ExtensionReferenceSampler" ||
-      node.comfyClass === "ElvaxH3ExtensionReferenceSampler";
+    const isCustomExtensionSampler =
+      node.type === "ElvaxH3ExtensionSampler" ||
+      node.comfyClass === "ElvaxH3ExtensionSampler";
+    const previousLatent = node.inputs?.find(
+      (input) => input.name === "previous_latent",
+    );
+    const waitingForPreviousLatent =
+      isCustomExtensionSampler && previousLatent?.link == null;
+    widget.disabled = waitingForPreviousLatent;
+    widget.tooltip = waitingForPreviousLatent
+      ? "Connect previous_latent to enable transition_mode."
+      : TRANSITION_MODE_TOOLTIPS[widget.value]
+        || "Choose how this H3 stage relates to the preceding stage.";
+    const contextDisabled =
+      (isCustomExtensionSampler && waitingForPreviousLatent)
+      || widget.value === "hard cut";
     if (videoContext) {
-      videoContext.disabled = isReferenceSampler
-        ? widget.value === "hard cut"
-        : widget.value === "Hard Cut";
+      videoContext.disabled = contextDisabled;
     }
     if (audioContext) {
-      audioContext.disabled = isReferenceSampler
-        ? widget.value === "hard cut"
-        : widget.value !== "Full Latent Extension";
+      audioContext.disabled = contextDisabled;
     }
     node.graph?.setDirtyCanvas(true, true);
   };
+  if (!node.__elvaxTransitionConnectionHookInstalled) {
+    node.__elvaxTransitionConnectionHookInstalled = true;
+    const originalConnectionsChange = node.onConnectionsChange;
+    node.onConnectionsChange = function (...args) {
+      const result = originalConnectionsChange?.apply(this, args);
+      requestAnimationFrame(updateTooltip);
+      return result;
+    };
+  }
   const originalCallback = widget.callback;
   widget.callback = function (...args) {
     const result = originalCallback?.apply(this, args);
