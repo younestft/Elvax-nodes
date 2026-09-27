@@ -10,6 +10,7 @@ import folder_paths
 
 NO_MODELS_FOUND = "No GGUF models found"
 NO_MMPROJ = "none"
+NO_MTP_MODEL = "None"
 
 
 def _model_roots() -> list[tuple[str, Path]]:
@@ -63,6 +64,14 @@ def mmproj_options() -> list[str]:
     return [NO_MMPROJ] + sorted(projects, key=str.casefold)
 
 
+def mtp_model_options() -> list[str]:
+    mtp_models = [
+        name for name in gguf_paths()
+        if any(marker in Path(name).name.lower() for marker in ("mtp", "assistant"))
+    ]
+    return [NO_MTP_MODEL] + sorted(mtp_models, key=str.casefold)
+
+
 def full_model_path(name: str) -> Path:
     if name == NO_MODELS_FOUND:
         raise FileNotFoundError("No GGUF model found in the configured LLM or text_encoders folders.")
@@ -78,4 +87,13 @@ def full_mmproj_path(name: str) -> Path | None:
     path = gguf_paths().get(name)
     if path is None or "mmproj" not in path.name.lower():
         raise FileNotFoundError(f"mmproj GGUF not found: {name}")
+    return path
+
+
+def full_mtp_model_path(name: str | None) -> Path | None:
+    if name is None or name == NO_MTP_MODEL:
+        return None
+    path = gguf_paths().get(name)
+    if path is None or not any(marker in path.name.lower() for marker in ("mtp", "assistant")):
+        raise FileNotFoundError(f"MTP GGUF not found: {name}")
     return path

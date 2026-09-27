@@ -63,6 +63,19 @@ frontend alias in the local Prompt IDE installation.
 Audio slots 1-3 pair with the matching video slot when that video is connected;
 otherwise they act as standalone audio. Slots 4-6 are standalone audio.
 
+## H3 Latent Upscaler
+
+`H3 Latent Upscaler` takes the final reference sampler's `extension_out`, runs
+the original LBH 3D video-latent upscaler, then samples each recorded stage at
+the selected resolution with that stage's own prompt and references. Audio is
+kept from the first pass. Inputs include the H3 model, upscaler checkpoint,
+scale, sampler, sigmas, seed, temporal chunking, and precision. Put LBH 3D
+checkpoints in `ComfyUI/models/latent_upscale_models`; the node does not depend
+on the xmarre Plus node pack. FP16 is the default precision. Enable
+`use_general_prompt` to upscale and sample the complete chain once with one
+shared prompt and no saved stage references. Otherwise, each stage is upscaled
+and sampled separately with its own prompt and references.
+
 ## Installation
 
 Clone this repository into `ComfyUI/custom_nodes`:
@@ -92,6 +105,10 @@ and timeline-aligned audio-continuation logic.
 The bundled H3 Reference Inputs node is adapted from the GPL-3.0-licensed
 [ComfyUI-H3-Prompt-IDE](https://github.com/ethanfel/ComfyUI-H3-Prompt-IDE) by
 Ethan Fel. It preserves the input socket labels and reference bundle contract.
+
+The 3D H3 latent-resizer implementation in `H3 Latent Upscaler` is derived
+from the MIT-licensed [Comfyui_Minimax_h3_latent_Upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler)
+by LBH-123-AI; see [LICENSE-LBH.txt](LICENSE-LBH.txt).
 
 LLM Turbo is adapted from the GPL-3.0-licensed
 [ComfyUI-LLM-text-processor](https://github.com/KingManiya/ComfyUI-LLM-text-processor)

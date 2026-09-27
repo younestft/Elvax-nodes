@@ -223,9 +223,13 @@ def _stage_preview(sampled_latent, video_vae, audio_vae, trim_frames, enabled):
 
 
 def _make_extension_data(latent, clip, video_vae, audio_vae, width, height,
-                         ref_image_size, sampler, sigmas, initial_duration_s):
+                         ref_image_size, sampler, sigmas, initial_duration_s,
+                         first_stage):
     return {
         "version": 1,
+        "stage_history_version": 1,
+        "stage_history_complete": True,
+        "stages": [first_stage],
         "latent": latent,
         "clip": clip,
         "video_vae": video_vae,
@@ -236,6 +240,41 @@ def _make_extension_data(latent, clip, video_vae, audio_vae, width, height,
         "sampler": sampler,
         "sigmas": sigmas,
         "initial_duration_s": float(initial_duration_s),
+    }
+
+
+def _stage_record(prompt, references, sampled_latent, trimmed_stage_latent,
+                  duration_frames, transition_mode=None,
+                  video_context_length=None, audio_context_length=None,
+                  trim_frames=0, previous_latent=None):
+    sampled_video, sampled_audio = H3ExtensionLatentTrim._streams(
+        sampled_latent, "sampled_latent")
+    stage_video, stage_audio = H3ExtensionLatentTrim._streams(
+        trimmed_stage_latent, "trimmed_stage_latent")
+
+    if previous_latent is None:
+        video_start = audio_start = 0
+    else:
+        previous_video, previous_audio = H3ExtensionLatentTrim._streams(
+            previous_latent, "previous_latent")
+        video_start = int(previous_video.shape[2])
+        audio_start = int(previous_audio.shape[-1])
+
+    return {
+        "prompt": prompt,
+        "references": references,
+        "sampled_latent": sampled_latent,
+        "duration_frames": int(duration_frames),
+        "transition_mode": transition_mode,
+        "video_context_length": video_context_length,
+        "audio_context_length": audio_context_length,
+        "trim_frames": int(trim_frames),
+        "video_trim_steps": int(sampled_video.shape[2] - stage_video.shape[2]),
+        "audio_trim_steps": int(sampled_audio.shape[-1] - stage_audio.shape[-1]),
+        "video_chain_start": video_start,
+        "audio_chain_start": audio_start,
+        "video_chain_steps": int(stage_video.shape[2]),
+        "audio_chain_steps": int(stage_audio.shape[-1]),
     }
 
 
@@ -409,12 +448,18 @@ class H3InitialReferenceSampler(io.ComfyNode):
             video_vae, audio_vae)
         sampled_latent = _sample(
             model, conditioning, base_latent, seed, sampler, sigmas)
+        trimmed_stage_latent = sampled_latent
+        duration_frames = _duration_to_h3_frames(duration_s)
+        first_stage = _stage_record(
+            prompt, references, sampled_latent, trimmed_stage_latent,
+            duration_frames,
+        )
         preview_images, preview_audio = _stage_preview(
             sampled_latent, video_vae, audio_vae, 0, enable_preview)
         extension_out = _make_extension_data(
             sampled_latent, clip, video_vae, audio_vae, width, height,
             ref_image_size, sampler, sigmas,
-            _duration_to_h3_frames(duration_s) / H3_FPS)
+            duration_frames / H3_FPS, first_stage)
         return io.NodeOutput(
             extension_out, sampled_latent, preview_images, preview_audio)
 
@@ -516,12 +561,14 @@ class H3ExtensionReferenceSampler(io.ComfyNode):
         sampled_latent = _sample(
             model, conditioning, base_latent, seed,
             extension_in["sampler"], extension_in["sigmas"])
-        chain_latent = H3ExtensionLatentTrim().trim_latent(
-            sampled_latent,
-            trim_frames,
-            previous_latent,
-            hard_cut=transition_mode == "hard cut",
-        )[0]
+        chain_latent, trimmed_stage_latent = (
+            H3ExtensionLatentTrim().trim_latent_and_stage(
+                sampled_latent,
+                trim_frames,
+                previous_latent,
+                hard_cut=transition_mode == "hard cut",
+            )
+        )
         preview_images, preview_audio = _stage_preview(
             sampled_latent,
             extension_in["video_vae"],
@@ -531,5 +578,27 @@ class H3ExtensionReferenceSampler(io.ComfyNode):
         )
         next_extension_out = dict(extension_in)
         next_extension_out["latent"] = chain_latent
+        prior_stages = extension_in.get("stages")
+        history_complete = (
+            extension_in.get("stage_history_version") == 1
+            and extension_in.get("stage_history_complete") is True
+            and isinstance(prior_stages, list)
+        )
+        stages = list(prior_stages) if isinstance(prior_stages, list) else []
+        stages.append(_stage_record(
+            prompt,
+            references,
+            sampled_latent,
+            trimmed_stage_latent,
+            _duration_to_h3_frames(duration_s),
+            transition_mode=transition_mode,
+            video_context_length=int(video_context_length),
+            audio_context_length=int(audio_context_length),
+            trim_frames=trim_frames,
+            previous_latent=previous_latent,
+        ))
+        next_extension_out["stage_history_version"] = 1
+        next_extension_out["stage_history_complete"] = history_complete
+        next_extension_out["stages"] = stages
         return io.NodeOutput(
             next_extension_out, chain_latent, preview_images, preview_audio)
