@@ -26,23 +26,6 @@ Loads an image with the familiar ComfyUI upload control and adds an interactive
 crop box. Apply the crop to use it as the node's `IMAGE` output, crop again as
 needed, or restore the original image. The node also outputs the matching mask.
 
-## H3 Custom Extension Sampler
-
-A single-node MiniMax H3 generation lane. Each instance keeps its own LoRA-fed
-model, sampler, sigmas, and seed. It does not decode internally and has no VAE
-inputs. Its `transition_mode` dropdown offers:
-
-- `motion context`: carries the preceding video and audio latents as
-  continuation context and trims their repeated head.
-- `hard cut`: samples without preceding-stage conditioning and joins with no
-  conditioning overlap. To keep the accumulated H3 latent decodable as one
-  stream, it trims the new stage's first 5 video frames at each join.
-
-Hover over `transition_mode` for its explanation. `chain_latent` is the
-accumulated sequence for the next stage; `stage_latent` is this stage alone,
-with its transition overlap removed. Decode either output downstream when
-needed.
-
 ## H3 Reference Samplers
 
 `H3 Initial Reference Sampler` builds native MiniMax H3 reference conditioning
@@ -68,6 +51,23 @@ frontend alias in the local Prompt IDE installation.
 
 Audio slots 1-3 pair with the matching video slot when that video is connected;
 otherwise they act as standalone audio. Slots 4-6 are standalone audio.
+
+## H3 Custom Extension Sampler
+
+A single-node MiniMax H3 generation lane. Each instance keeps its own LoRA-fed
+model, sampler, sigmas, and seed. It does not decode internally and has no VAE
+inputs. Its `transition_mode` dropdown offers:
+
+- `motion context`: carries the preceding video and audio latents as
+  continuation context and trims their repeated head.
+- `hard cut`: samples without preceding-stage conditioning and joins with no
+  conditioning overlap. To keep the accumulated H3 latent decodable as one
+  stream, it trims the new stage's first 5 video frames at each join.
+
+Hover over `transition_mode` for its explanation. `chain_latent` is the
+accumulated sequence for the next stage; `stage_latent` is this stage alone,
+with its transition overlap removed. Decode either output downstream when
+needed.
 
 ## Installation
 
