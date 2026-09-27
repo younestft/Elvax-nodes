@@ -20,6 +20,12 @@ input and adds the next empty input when a value is connected. Dynamic Pipe Out
 then creates matching named outputs when the pipe is connected. The nodes carry
 data only; they do not alter the values or improve inference performance.
 
+## Load/Crop Image
+
+Loads an image with the familiar ComfyUI upload control and adds an interactive
+crop box. Apply the crop to use it as the node's `IMAGE` output, crop again as
+needed, or restore the original image. The node also outputs the matching mask.
+
 ## H3 Custom Extension Sampler
 
 A single-node MiniMax H3 generation lane. Each instance keeps its own LoRA-fed
