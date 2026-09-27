@@ -7,6 +7,8 @@ const HANDLE_SIZE = 7;
 const MIN_PREVIEW_HEIGHT = 190;
 const RESOLUTION_HEIGHT = 18;
 const MIN_WIDGET_HEIGHT = MIN_PREVIEW_HEIGHT + 22 + RESOLUTION_HEIGHT;
+const NODE_FOOTER_SPACE = 0;
+const PREVIEW_LAYOUT_SPACE = 32;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -113,7 +115,7 @@ function installCropUI(node) {
   const canvas = document.createElement("canvas");
   canvas.style.cssText = "display:block;max-width:100%;user-select:none;pointer-events:none;";
   const interaction = document.createElement("div");
-  interaction.style.cssText = "position:absolute;inset:10px;touch-action:none;pointer-events:auto;cursor:crosshair;outline:none;";
+  interaction.style.cssText = "position:absolute;inset:0;touch-action:none;pointer-events:auto;cursor:crosshair;outline:none;";
   interaction.tabIndex = 0;
   imageWrap.append(canvas, interaction);
   const resolution = document.createElement("div");
@@ -182,14 +184,17 @@ function installCropUI(node) {
 
   function previewDimensions() {
     const maxWidth = Math.max(1, preview.clientWidth || 320);
-    const previewTop = Number.isFinite(domWidget.last_y) && domWidget.last_y > 0
-      ? domWidget.last_y : 94;
-    const maxHeight = Math.max(MIN_PREVIEW_HEIGHT, (node.size?.[1] || 0) - previewTop - 32 - RESOLUTION_HEIGHT);
+    const nodeHeight = node.size?.[1] || 0;
+    const widgetTop = Number.isFinite(domWidget.last_y) && domWidget.last_y > 0
+      ? domWidget.last_y
+      : Math.max(0, nodeHeight - editorHeight);
+    const maxHeight = Math.max(1, nodeHeight - widgetTop - NODE_FOOTER_SPACE
+      - PREVIEW_LAYOUT_SPACE - RESOLUTION_HEIGHT);
     const view = viewRect || { x: 0, y: 0, width: imageWidth || 16, height: imageHeight || 9 };
     const scale = Math.min(maxWidth / view.width, maxHeight / view.height);
     const width = Math.max(1, Math.round(view.width * scale));
     const height = Math.max(1, Math.round(view.height * scale));
-    return { width, height };
+    return { width, height, maxHeight };
   }
 
   function updateMinimumNodeSize(growFreshNode = false) {
@@ -214,8 +219,7 @@ function installCropUI(node) {
 
   function resizeCanvas() {
     const size = previewDimensions();
-    const previewHeight = Math.max(MIN_PREVIEW_HEIGHT, size.height);
-    editorHeight = previewHeight + 22 + RESOLUTION_HEIGHT;
+    editorHeight = Math.max(MIN_WIDGET_HEIGHT, size.maxHeight + PREVIEW_LAYOUT_SPACE + RESOLUTION_HEIGHT);
     const view = viewRect || { width: size.width, height: size.height };
     const pixelWidth = Math.max(1, Math.round(view.width));
     const pixelHeight = Math.max(1, Math.round(view.height));
@@ -266,20 +270,21 @@ function installCropUI(node) {
       ctx.fillRect(0, top, left, boxHeight);
       ctx.fillRect(right, top, width - right, boxHeight);
       ctx.fillRect(0, bottom, width, height - bottom);
+      const canvasBounds = canvas.getBoundingClientRect();
+      const handle = Math.max(4, HANDLE_SIZE * width / Math.max(1, canvasBounds.width));
+      const half = handle / 2;
+      const topHandleY = top < half && boxHeight >= handle ? half : top;
       ctx.strokeStyle = "#f4f4f4";
       ctx.lineWidth = 1;
       ctx.strokeRect(left + 0.5, top + 0.5, Math.max(0, boxWidth - 1), Math.max(0, boxHeight - 1));
-
-      const handle = Math.max(4, HANDLE_SIZE * width / Math.max(1, preview.clientWidth));
-      const half = handle / 2;
       const points = [
-        [left, top], [left + boxWidth / 2, top], [right, top],
+        [left, topHandleY], [left + boxWidth / 2, topHandleY], [right, topHandleY],
         [left, top + boxHeight / 2], [right, top + boxHeight / 2],
         [left, bottom], [left + boxWidth / 2, bottom], [right, bottom],
       ];
       ctx.fillStyle = "#f4f4f4";
       ctx.strokeStyle = "#555";
-      ctx.lineWidth = Math.max(1, width / Math.max(1, preview.clientWidth));
+      ctx.lineWidth = Math.max(1, width / Math.max(1, canvasBounds.width));
       for (const [x, y] of points) {
         ctx.fillRect(x - half, y - half, handle, handle);
         ctx.strokeRect(x - half + 0.5, y - half + 0.5, Math.max(1, handle - 1), Math.max(1, handle - 1));
@@ -289,7 +294,7 @@ function installCropUI(node) {
   }
 
   function pointFromEvent(event) {
-    const bounds = canvas.getBoundingClientRect();
+    const bounds = interaction.getBoundingClientRect();
     const view = viewRect || { width: imageWidth, height: imageHeight };
     return {
       x: clamp((event.clientX - bounds.left) / bounds.width * view.width, 0, view.width),
@@ -300,8 +305,9 @@ function installCropUI(node) {
   function hitTest(point) {
     if (!selection) return "draw";
     const view = viewRect || { width: imageWidth, height: imageHeight };
-    const toleranceX = 9 * view.width / Math.max(1, canvas.getBoundingClientRect().width);
-    const toleranceY = 9 * view.height / Math.max(1, canvas.getBoundingClientRect().height);
+    const bounds = interaction.getBoundingClientRect();
+    const toleranceX = 9 * view.width / Math.max(1, bounds.width);
+    const toleranceY = 9 * view.height / Math.max(1, bounds.height);
     const left = selection.x;
     const top = selection.y;
     const right = left + selection.width;
