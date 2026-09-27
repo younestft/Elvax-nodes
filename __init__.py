@@ -4,7 +4,6 @@ from .h3_reference_samplers import (
     H3InitialReferenceSampler,
     H3ReferenceInputs,
 )
-from .h3_latent_upscaler import H3LatentUpscaler
 from .load_crop_image import LoadCropImage
 from .dynamic_pipe import DynamicPipeIn, DynamicPipeOut
 from .llm_turbo.nodes import LLMTurbo
@@ -15,7 +14,6 @@ NODE_CLASS_MAPPINGS = {
     "ElvaxH3ReferenceInputs": H3ReferenceInputs,
     "ElvaxH3InitialReferenceSampler": H3InitialReferenceSampler,
     "ElvaxH3ExtensionReferenceSampler": H3ExtensionReferenceSampler,
-    "ElvaxH3LatentUpscaler": H3LatentUpscaler,
     "ElvaxLoadCropImage": LoadCropImage,
     "ElvaxDynamicPipeIn": DynamicPipeIn,
     "ElvaxDynamicPipeOut": DynamicPipeOut,
@@ -27,7 +25,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ElvaxH3ReferenceInputs": "H3 Reference Inputs",
     "ElvaxH3InitialReferenceSampler": "H3 Initial Reference Sampler",
     "ElvaxH3ExtensionReferenceSampler": "H3 Extension Reference Sampler",
-    "ElvaxH3LatentUpscaler": "H3 Latent Upscaler",
     "ElvaxLoadCropImage": "Load/Crop Image",
     "ElvaxDynamicPipeIn": "Dynamic Pipe In",
     "ElvaxDynamicPipeOut": "Dynamic Pipe Out",
