@@ -171,6 +171,10 @@ function installCropUI(node) {
 
   function updateButtons() {
     const view = viewRect || { x: 0, y: 0, width: imageWidth, height: imageHeight };
+    const dimensions = selection || view;
+    resolution.textContent = source && imageWidth && imageHeight
+      ? `${Math.max(0, Math.round(dimensions.width))} × ${Math.max(0, Math.round(dimensions.height))}`
+      : "";
     const isFullView = selection
       && selection.x <= 0 && selection.y <= 0
       && selection.x + selection.width >= view.width
@@ -229,7 +233,6 @@ function installCropUI(node) {
     imageWrap.style.height = `${size.height}px`;
     canvas.style.width = `${size.width}px`;
     canvas.style.height = `${size.height}px`;
-    resolution.textContent = source && imageWidth && imageHeight ? `${pixelWidth} × ${pixelHeight}` : "";
     draw();
   }
 
