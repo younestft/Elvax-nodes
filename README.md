@@ -1,6 +1,6 @@
 # Elvax Nodes
 
-Convenience nodes for ComfyUI.
+Convenience nodes for ComfyUI!
 
 ## LLM Turbo
 
