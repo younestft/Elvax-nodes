@@ -16,9 +16,7 @@ projector (`mmproj`).
 
 ## Load/Crop Image
 
-Load an image, crop it interactively, and send the current image and matching
-mask downstream. Refine the crop as often as you like, or restore the original
-image at any time.
+Load and crop an image fast in one node.
 
 ![Load/Crop Image](assets/load-crop.gif)
 
