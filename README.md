@@ -15,8 +15,6 @@ matching local binary is not already available.
 
 ![LLM Turbo](assets/llm-turbo.gif)
 
-![LLM Turbo low-resource configuration](assets/llm-turbo-low.gif)
-
 ## Dynamic Pipe In / Dynamic Pipe Out
 
 Organize multiple connections as one cable. Dynamic Pipe In begins with one
