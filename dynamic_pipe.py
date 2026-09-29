@@ -12,7 +12,7 @@ class DynamicPipeIn:
     RETURN_NAMES = ("pipe",)
     FUNCTION = "pack"
     DESCRIPTION = ("Bundle connected values in input order for transport through "
-                   "a single pipe.")
+                   "a single pipe. Supports Set/Get nodes and Reroutes.")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -41,7 +41,7 @@ class DynamicPipeOut:
     RETURN_NAMES = tuple("value_%d" % index for index in range(1, MAX_PIPE_SLOTS + 1))
     FUNCTION = "unpack"
     DESCRIPTION = ("Unpack a pipe into separate outputs in the original input "
-                   "order.")
+                   "order. Supports Set/Get nodes and Reroutes.")
 
     @classmethod
     def INPUT_TYPES(cls):
