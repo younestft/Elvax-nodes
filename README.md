@@ -4,10 +4,10 @@ Convenience nodes for ComfyUI!
 
 ## LLM Turbo
 
-Run local GGUF models directly inside ComfyUI blazingly fast! through llama.cpp, with no external
-LLM app, setup or headache!. Pair system and user prompts with
-dynamically growing image or audio inputs, including image batches, and use MTP
-where supported. The `stats` output reports total node
+Run local GGUF models directly inside ComfyUI at blazing speed! through the 
+llama.cpp backend, no external LLM app, setup or headache!. Pair system and
+user prompts with dynamically growing image or audio inputs, including image batches, 
+and use MTP where supported. The `stats` output reports total node
 runtime and llama.cpp generation speeds. Select models from `models/LLM` or
 `models/text_encoders`; image and audio inputs require a compatible model and
 projector (`mmproj`).
