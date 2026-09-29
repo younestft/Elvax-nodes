@@ -91,6 +91,11 @@ Restart ComfyUI. The nodes appear under the `Elvax` category.
 
 This repository is licensed under GNU GPL v3 or later; see [LICENSE](LICENSE).
 
+LLM Turbo is adapted from the GPL-3.0-licensed
+[ComfyUI-LLM-text-processor](https://github.com/KingManiya/ComfyUI-LLM-text-processor)
+by KingManiya. It retains the GGUF llama.cpp invocation, image conversion, and
+response parsing, with Elvax-specific inputs, model discovery, and timing output.
+
 The H3 Extension Sampler is a modified derivative of
 [ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context)
 by NikoDemon80. It retains GPL-licensed H3 layout checks, latent-tail slicing,
@@ -99,8 +104,3 @@ and timeline-aligned audio-continuation logic.
 The bundled H3 References node is adapted from the GPL-3.0-licensed
 [ComfyUI-H3-Prompt-IDE](https://github.com/ethanfel/ComfyUI-H3-Prompt-IDE) by
 Ethan Fel. It preserves the input socket labels and reference bundle contract.
-
-LLM Turbo is adapted from the GPL-3.0-licensed
-[ComfyUI-LLM-text-processor](https://github.com/KingManiya/ComfyUI-LLM-text-processor)
-by KingManiya. It retains the GGUF llama.cpp invocation, image conversion, and
-response parsing, with Elvax-specific inputs, model discovery, and timing output.
