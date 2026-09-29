@@ -4,73 +4,69 @@ Convenience nodes for ComfyUI.
 
 ## LLM Turbo
 
-Runs local GGUF language and vision models through llama.cpp. Select a model from
-ComfyUI's configured `LLM` or `text_encoders` folders. For image batches, connect
-`images` and select a matching `mmproj`. Enter separate `system_prompt` and
-`user_prompt` text; `context_window_size` sits directly below the user prompt.
-The `stats` output includes total node execution time and llama.cpp speed figures
-when available. GPU and CPU layer placement use llama.cpp defaults. On supported
-Windows CUDA systems, the node can download its pinned llama.cpp release if a
-matching local binary is not already available.
+Run a local GGUF model through llama.cpp for fast inference in ComfyUI. Pair
+system and user prompts with dynamically growing image or audio inputs—including
+image batches—and use MTP where supported. The `stats` output reports total node
+runtime and llama.cpp generation speeds. Select models from `models/LLM` or
+`models/text_encoders`; image and audio inputs require a compatible model and
+projector (`mmproj`).
 
 ![LLM Turbo](assets/llm-turbo.gif)
 
-## Dynamic Pipe In / Dynamic Pipe Out
-
-Organize multiple connections as one cable. Dynamic Pipe In begins with one
-input and adds the next empty input when a value is connected. Dynamic Pipe Out
-then creates matching named outputs when the pipe is connected. The nodes carry
-data only; they do not alter the values or improve inference performance.
-
-![Dynamic Pipe In and Dynamic Pipe Out](assets/dynamic-pipes.gif)
-
 ## Load/Crop Image
 
-Loads an image with the familiar ComfyUI upload control and adds an interactive
-crop box. Apply the crop to use it as the node's `IMAGE` output, crop again as
-needed, or restore the original image. The node also outputs the matching mask.
+Load an image, crop it interactively, and send the current image and matching
+mask downstream. Refine the crop as often as you like, or restore the original
+image at any time.
 
 ![Load/Crop Image](assets/load-crop.gif)
 
+## Dynamic Pipe In / Dynamic Pipe Out
+
+Bundle connected values in input order and carry them through a single pipe.
+Dynamic Pipe In grows as you connect values; Dynamic Pipe Out unpacks them into
+separate outputs in their original order—handy for keeping complex workflows
+tidy without changing the values themselves.
+
+![Dynamic Pipe In and Dynamic Pipe Out](assets/dynamic-pipes.gif)
+
+## Prompt Edit / Preview
+
+Edit prompt text directly or preview text from a connected source before passing
+it downstream. Switch between Edit and Preview modes to quickly refine or inspect
+generated text in your workflow.
+
 ## H3 Staged Samplers
 
-`H3 Chain Settings` holds the shared CLIP, VAEs, sampler, sigmas, dimensions,
-and reference sizing. Connect it to each `H3 Stage Settings` node; configure
-each stage's model, references, prompt, seed, duration, and transition there.
-Connect each stage's settings to `H3 Sampler Preview`, then chain its
-`chain_latent` output into the next preview node's `previous_latent` input.
-`motion context` carries prior latent context; `hard cut` joins without it and
-trims the new stage's first five video frames.
+Build a MiniMax H3 generation as a configurable stage-by-stage chain. Set shared
+generation parameters once in `H3 Chain Settings`, then tailor each stage with
+`H3 Stage Settings`. Use `H3 Sampler Preview` to sample the stage, optionally
+show a live tiny-VAE preview or decode the full video, and pass the accumulated
+latent into the next stage. Motion Context continues from prior latent context;
+Hard Cut starts a fresh joined segment.
 
-`H3 Sampler Preview` can show live previews with a selected tiny VAE and create
-a final video preview. The `preview_result` toggle controls only the final
-video; live previews remain enabled whenever `tiny_vae` is selected.
+`H3 Chain Settings`: Configure the shared settings for a MiniMax H3 extension
+chain.
 
-The bundled `H3 References` node uses the same `H3_PROMPT_REFERENCES`
-wire type and payload as the H3 Prompt IDE reference node. It works with the
-new samplers without the Prompt IDE pack. When the Prompt IDE is installed, its
-reference palette and previews recognize the Elvax node ID through a small
-frontend alias in the local Prompt IDE installation.
+`H3 Stage Settings`: Configure each stage of a MiniMax H3 extension chain
+independently.
 
-Audio slots 1-3 pair with the matching video slot when that video is connected;
-otherwise they act as standalone audio. Slots 4-6 are standalone audio.
+`H3 Sampler Preview`: Sample a stage, optionally show a live tiny-VAE preview
+during sampling or decode a full video preview, and pass the accumulated latent
+to the next stage. The `preview_result` toggle controls full video decoding;
+live previews are available when a tiny VAE is selected.
+
+`H3 References`: Bundle picture, video, and audio references with MiniMax H3
+token labels for use in H3 Stage Settings. Audio slots 1–3 pair with their
+matching connected video slots; remaining audio slots are standalone.
 
 ## H3 Custom Extension Sampler
 
-A single-node MiniMax H3 generation lane. Each instance keeps its own LoRA-fed
-model, sampler, sigmas, and seed. It does not decode internally and has no VAE
-inputs. Its `transition_mode` dropdown offers:
-
-- `motion context`: carries the preceding video and audio latents as
-  continuation context and trims their repeated head.
-- `hard cut`: samples without preceding-stage conditioning and joins with no
-  conditioning overlap. To keep the accumulated H3 latent decodable as one
-  stream, it trims the new stage's first 5 video frames at each join.
-
-Hover over `transition_mode` for its explanation. `chain_latent` is the
-accumulated sequence for the next stage; `stage_latent` is this stage alone,
-with its transition overlap removed. Decode either output downstream when
-needed.
+Seamlessly extend a MiniMax H3 generation from one sampler stage to the next,
+with controls to customize exactly how you want it built. Sampling stays
+lightweight: the node returns the accumulated `chain_latent` and this stage's
+`stage_latent` without decoding, so you can connect your preferred preview or
+decode workflow.
 
 ## Installation
 
