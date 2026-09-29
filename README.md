@@ -4,9 +4,10 @@ Convenience nodes for ComfyUI!
 
 ## LLM Turbo
 
-Run a local GGUF model through llama.cpp for fast inference in ComfyUI. Pair
-system and user prompts with dynamically growing image or audio inputs—including
-image batches—and use MTP where supported. The `stats` output reports total node
+Run local GGUF models directly inside ComfyUI through llama.cpp, with no separate
+LLM app or external service to set up. Pair system and user prompts with
+dynamically growing image or audio inputs, including image batches, and use MTP
+where supported. The `stats` output reports total node
 runtime and llama.cpp generation speeds. Select models from `models/LLM` or
 `models/text_encoders`; image and audio inputs require a compatible model and
 projector (`mmproj`).
@@ -25,7 +26,7 @@ image at any time.
 
 Bundle connected values in input order and carry them through a single pipe.
 Dynamic Pipe In grows as you connect values; Dynamic Pipe Out unpacks them into
-separate outputs in their original order—handy for keeping complex workflows
+separate outputs in their original order, keeping complex workflows
 tidy without changing the values themselves. Supports Set/Get nodes and
 Reroutes.
 
