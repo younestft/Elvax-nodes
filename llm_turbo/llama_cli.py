@@ -371,7 +371,11 @@ def _parse_response(text: str) -> tuple[str, str, str]:
 
 
 def _parse_llama_error(stderr: str) -> str:
-    match = MMPROJ_EMBEDDING_MISMATCH_RE.search(str(stderr or ""))
+    stderr = str(stderr or "")
+    if "audio input is not supported" in stderr.casefold():
+        return "Audio input is not supported by this model, or you may need to load the mmproj file."
+
+    match = MMPROJ_EMBEDDING_MISMATCH_RE.search(stderr)
     if not match:
         return ""
     return (

@@ -1255,9 +1255,9 @@ class H3ExtensionBridge:
     RETURN_NAMES = ("conditioning", "latent", "trim_frames")
     FUNCTION = "bridge"
     CATEGORY = "conditioning/minimax"
-    DESCRIPTION = ("Seamlessly extend MiniMax H3 from the previous sampler output. "
-                   "Wire outputs to the current guider, current sampler latent_image, "
-                   "and the current image/audio trim node.")
+    DESCRIPTION = ("Seamlessly extend a MiniMax H3 generation from one sampler "
+                   "stage to the next, with controls to customize exactly how "
+                   "you want it built.")
 
     def bridge(self, previous_latent, conditioning, latent, video_vae,
                context_length="22", audio_context_length=24):

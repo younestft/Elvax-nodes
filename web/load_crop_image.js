@@ -116,7 +116,10 @@ function installCropUI(node) {
   canvas.style.cssText = "display:block;max-width:100%;user-select:none;pointer-events:none;";
   const interaction = document.createElement("div");
   interaction.style.cssText = "position:absolute;inset:0;touch-action:none;pointer-events:auto;cursor:crosshair;outline:none;";
-  interaction.tabIndex = 0;
+  interaction.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    app.canvas._mousewheel_callback(event);
+  }, { capture: true, passive: false });
   imageWrap.append(canvas, interaction);
   const resolution = document.createElement("div");
   resolution.style.cssText = `flex:0 0 ${RESOLUTION_HEIGHT}px;height:${RESOLUTION_HEIGHT}px;padding-top:3px;box-sizing:border-box;color:#aaa;font:10px/12px sans-serif;text-align:center;white-space:nowrap;user-select:none;`;
@@ -277,8 +280,11 @@ function installCropUI(node) {
       const handle = Math.max(4, HANDLE_SIZE * width / Math.max(1, canvasBounds.width));
       const half = handle / 2;
       const topHandleY = top < half && boxHeight >= handle ? half : top;
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(left + 0.5, top + 0.5, Math.max(0, boxWidth - 1), Math.max(0, boxHeight - 1));
       ctx.strokeStyle = "#f4f4f4";
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 3;
       ctx.strokeRect(left + 0.5, top + 0.5, Math.max(0, boxWidth - 1), Math.max(0, boxHeight - 1));
       const points = [
         [left, topHandleY], [left + boxWidth / 2, topHandleY], [right, topHandleY],
@@ -375,13 +381,19 @@ function installCropUI(node) {
     graphCanvas?.processContextMenu(node, event);
   });
 
-  async function copyImage() {
-    if (!source || !imageWidth || !imageHeight) return;
+  function currentImageCanvas() {
+    if (!source || !imageWidth || !imageHeight) return null;
     const view = viewRect || { x: 0, y: 0, width: imageWidth, height: imageHeight };
     const image = document.createElement("canvas");
-    image.width = view.width;
-    image.height = view.height;
-    image.getContext("2d").drawImage(source, view.x, view.y, view.width, view.height, 0, 0, view.width, view.height);
+    image.width = Math.round(view.width);
+    image.height = Math.round(view.height);
+    image.getContext("2d").drawImage(source, view.x, view.y, view.width, view.height, 0, 0, image.width, image.height);
+    return image;
+  }
+
+  async function copyImage() {
+    const image = currentImageCanvas();
+    if (!image) return;
     const blob = new Promise((resolve) => image.toBlob(resolve, "image/png"));
     try {
       await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
@@ -389,6 +401,78 @@ function installCropUI(node) {
       console.warn("Load/Crop Image: could not copy image", error);
     }
   }
+
+  function openImage() {
+    const url = viewUrl(imageWidget.value);
+    if (!url) return;
+    const view = viewRect || { x: 0, y: 0, width: imageWidth, height: imageHeight };
+    const isCropped = view.x !== 0 || view.y !== 0 || view.width !== imageWidth || view.height !== imageHeight;
+    if (!isCropped) {
+      window.open(url, "_blank");
+      return;
+    }
+    const image = currentImageCanvas();
+    if (!image) return;
+    const imageWindow = window.open(url, "_blank");
+    if (!imageWindow) return;
+    const targetUrl = new URL(url, window.location.href).href;
+    let attempts = 0;
+    const replaceWithCrop = () => {
+      if (imageWindow.closed) return;
+      if (imageWindow.location.href !== targetUrl
+        || !imageWindow.document.contentType?.startsWith("image/")) {
+        if (attempts++ < 200) setTimeout(replaceWithCrop, 50);
+        return;
+      }
+      image.toBlob((blob) => {
+        if (!blob || imageWindow.closed) return;
+        const previewUrl = URL.createObjectURL(blob);
+        const preview = imageWindow.document.createElement("img");
+        const filename = String(imageWidget.value || "image").replace(/\\/g, "/").split("/").pop()
+          .replace(/\s+\[(input|output|temp)\]$/i, "") || "image";
+        imageWindow.document.title = filename;
+        imageWindow.document.body.style.cssText = "display:grid;place-items:center;min-width:100vw;min-height:100vh;margin:0;background:#111;";
+        preview.alt = filename;
+        preview.style.cssText = "display:block;max-width:100vw;max-height:100vh;object-fit:contain;";
+        preview.addEventListener("load", () => URL.revokeObjectURL(previewUrl), { once: true });
+        preview.src = previewUrl;
+        imageWindow.document.body.replaceChildren(preview);
+      }, "image/png");
+    };
+    replaceWithCrop();
+  }
+
+  function saveImage() {
+    const image = currentImageCanvas();
+    if (!image) return;
+    image.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const filename = String(imageWidget.value || "image").replace(/\\/g, "/").split("/").pop()
+        .replace(/\s+\[(input|output|temp)\]$/i, "").replace(/\.[^.]+$/, "") || "image";
+      link.href = url;
+      link.download = `${filename}.png`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }, "image/png");
+  }
+
+  const originalGetExtraMenuOptions = node.getExtraMenuOptions;
+  node.getExtraMenuOptions = function (canvas, options) {
+    const result = originalGetExtraMenuOptions?.call(this, canvas, options);
+    if (source && imageWidth && imageHeight) {
+      const imageOptions = [
+        { content: "Open Image", callback: openImage },
+        ...(window.ClipboardItem ? [{ content: "Copy Image", callback: copyImage }] : []),
+        { content: "Save Image", callback: saveImage },
+      ];
+      options.unshift(...imageOptions);
+    }
+    return result;
+  };
 
   function onKeyDown(event) {
     if (event.key === "Escape" && (selection || drag) && (document.activeElement === interaction || app.canvas?.selected_nodes?.[node.id])) {
@@ -411,7 +495,6 @@ function installCropUI(node) {
     if (!source || !imageWidth || !imageHeight || event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
-    interaction.focus({ preventScroll: true });
     const point = pointFromEvent(event);
     const mode = hitTest(point);
     drag = { mode, start: point, original: selection && { ...selection }, pointerId: event.pointerId };

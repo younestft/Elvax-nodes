@@ -28,8 +28,42 @@ function linkedOrigin(node, input) {
   return link ? node.graph?.getNodeById(link.origin_id) ?? null : null;
 }
 
+function isRerouteNode(node) {
+  return node?.type === "Reroute" || node?.comfyClass === "Reroute";
+}
+
+function connectedOutput(node, input) {
+  const visited = new Set();
+  let source = linkedOrigin(node, input);
+  let output = linkedOutput(node, input);
+  while (isRerouteNode(source) && !visited.has(source)) {
+    visited.add(source);
+    const upstream = source.inputs?.find((item) => item.link != null);
+    if (!upstream) break;
+    output = linkedOutput(source, upstream);
+    source = linkedOrigin(source, upstream);
+  }
+  return { source, output };
+}
+
 function labelFor(output, fallback) {
   return output?.label || output?.name || fallback;
+}
+
+function uniqueLabels(labels) {
+  const used = new Set();
+  const nextSuffix = new Map();
+  return labels.map((label) => {
+    const base = String(label);
+    let candidate = base;
+    let suffix = nextSuffix.get(base) || 2;
+    while (used.has(candidate)) {
+      candidate = `${base}_${suffix++}`;
+    }
+    used.add(candidate);
+    nextSuffix.set(base, suffix);
+    return candidate;
+  });
 }
 
 function frontendGetName(node) {
@@ -41,16 +75,47 @@ function frontendGetName(node) {
 }
 
 function connectedValueLabel(node, input, fallback) {
-  const source = linkedOrigin(node, input);
-  return frontendGetName(source) || labelFor(linkedOutput(node, input), fallback);
+  const { source, output } = connectedOutput(node, input);
+  return frontendGetName(source) || labelFor(output, fallback);
 }
 
-function refreshPipeLabelsFromGetNode(getNode) {
-  for (const linkId of getNode.outputs?.[0]?.links || []) {
-    const link = getNode.graph?.links?.[linkId];
-    const target = link && getNode.graph?.getNodeById(link.target_id);
-    if (isNode(target, PIPE_IN)) syncPipeIn(target);
+function refreshDownstreamPipeLabels(sourceNode) {
+  const visited = new Set();
+  const pending = [sourceNode];
+  while (pending.length) {
+    const source = pending.pop();
+    if (!source || visited.has(source)) continue;
+    visited.add(source);
+    for (const output of source.outputs || []) {
+      for (const linkId of output.links || []) {
+        const link = source.graph?.links?.[linkId];
+        const target = link && source.graph?.getNodeById(link.target_id);
+        if (isNode(target, PIPE_IN)) syncPipeIn(target);
+        else if (isRerouteNode(target)) pending.push(target);
+      }
+    }
   }
+}
+
+function installRerouteLabelSync(node) {
+  if (node.__elvaxRerouteLabelSyncInstalled) return;
+  node.__elvaxRerouteLabelSyncInstalled = true;
+  const refresh = () => requestAnimationFrame(() => refreshDownstreamPipeLabels(node));
+
+  const originalConnectionsChange = node.onConnectionsChange;
+  node.onConnectionsChange = function (...args) {
+    const result = originalConnectionsChange?.apply(this, args);
+    refresh();
+    return result;
+  };
+
+  const originalConfigure = node.onConfigure;
+  node.onConfigure = function (...args) {
+    const result = originalConfigure?.apply(this, args);
+    refresh();
+    return result;
+  };
+  refresh();
 }
 
 function installGetNodeLabelSync(node) {
@@ -63,7 +128,7 @@ function installGetNodeLabelSync(node) {
     const originalCallback = widget.callback;
     widget.callback = function (...args) {
       const result = originalCallback?.apply(this, args);
-      requestAnimationFrame(() => refreshPipeLabelsFromGetNode(node));
+      requestAnimationFrame(() => refreshDownstreamPipeLabels(node));
       return result;
     };
   }
@@ -72,7 +137,7 @@ function installGetNodeLabelSync(node) {
   if (originalRename) {
     node.onRename = function (...args) {
       const result = originalRename.apply(this, args);
-      requestAnimationFrame(() => refreshPipeLabelsFromGetNode(node));
+      requestAnimationFrame(() => refreshDownstreamPipeLabels(node));
       return result;
     };
   }
@@ -81,7 +146,7 @@ function installGetNodeLabelSync(node) {
   if (originalConfigure) {
     node.onConfigure = function (...args) {
       const result = originalConfigure.apply(this, args);
-      setTimeout(() => refreshPipeLabelsFromGetNode(node), 0);
+      setTimeout(() => refreshDownstreamPipeLabels(node), 0);
       return result;
     };
   }
@@ -89,10 +154,10 @@ function installGetNodeLabelSync(node) {
   const originalConnectionsChange = node.onConnectionsChange;
   node.onConnectionsChange = function (...args) {
     const result = originalConnectionsChange?.apply(this, args);
-    requestAnimationFrame(() => refreshPipeLabelsFromGetNode(node));
+    requestAnimationFrame(() => refreshDownstreamPipeLabels(node));
     return result;
   };
-  requestAnimationFrame(() => refreshPipeLabelsFromGetNode(node));
+  requestAnimationFrame(() => refreshDownstreamPipeLabels(node));
 }
 
 function installDurationControls(node) {
@@ -119,8 +184,11 @@ function installDurationControls(node) {
 
 function finishLayout(node) {
   const size = node.computeSize();
-  // Leave room for the title and keep any extra width chosen by the user.
-  size[0] = Math.max(PIPE_DEFAULT_WIDTH, size[0], node.size?.[0] || 0);
+  const currentWidth = node.size?.[0] || 0;
+  size[0] = node.__elvaxDynamicPipeFresh
+    ? PIPE_DEFAULT_WIDTH
+    : currentWidth || Math.max(PIPE_DEFAULT_WIDTH, size[0]);
+  node.__elvaxDynamicPipeFresh = false;
   node.setSize(size);
   node.graph?.setDirtyCanvas(true, true);
 }
@@ -138,11 +206,14 @@ function syncPipeIn(node) {
   if (node.inputs.length < MAX_PIPE_SLOTS) {
     node.addInput(`value_${node.inputs.length + 1}`, "*");
   }
-  for (const input of node.inputs) {
-    const output = linkedOutput(node, input);
-    input.label = connectedValueLabel(node, input, input.name);
+  const labels = uniqueLabels(node.inputs.map((input) =>
+    connectedValueLabel(node, input, input.name),
+  ));
+  node.inputs.forEach((input, index) => {
+    const { output } = connectedOutput(node, input);
+    input.label = labels[index];
     input.type = output?.type || "*";
-  }
+  });
   const last = node.inputs.at(-1);
   if ((!last || last.link != null) && node.inputs.length < MAX_PIPE_SLOTS) {
     node.addInput(`value_${node.inputs.length + 1}`, "*");
@@ -175,13 +246,12 @@ function syncPipeOut(node) {
   while (node.outputs.length < entries.length) {
     node.addOutput(`value_${node.outputs.length + 1}`, "*");
   }
+  const labels = uniqueLabels(entries.map((input, index) =>
+    connectedValueLabel(source, input, node.outputs[index].name),
+  ));
   entries.forEach((input, index) => {
-    const output = linkedOutput(source, input);
-    node.outputs[index].label = connectedValueLabel(
-      source,
-      input,
-      node.outputs[index].name,
-    );
+    const { output } = connectedOutput(source, input);
+    node.outputs[index].label = labels[index];
     node.outputs[index].type = output?.type || "*";
   });
   // Keep unused output slots harmless but invisible in meaning; do not remove
@@ -327,11 +397,13 @@ app.registerExtension({
     const originalConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onNodeCreated = function (...args) {
       const result = originalCreated?.apply(this, args);
+      this.__elvaxDynamicPipeFresh = true;
       requestAnimationFrame(() => installDynamicPipe(this));
       return result;
     };
     nodeType.prototype.onConfigure = function (...args) {
       const result = originalConfigure?.apply(this, args);
+      this.__elvaxDynamicPipeFresh = false;
       requestAnimationFrame(() => {
         installDynamicPipe(this);
         if (isNode(this, PIPE_IN)) syncPipeIn(this);
@@ -341,31 +413,56 @@ app.registerExtension({
     };
   },
   nodeCreated(node) {
+    if (isRerouteNode(node)) {
+      installRerouteLabelSync(node);
+      return;
+    }
+
     if (node.type === "GetNode" || node.comfyClass === "GetNode") {
       installGetNodeLabelSync(node);
       return;
     }
 
+    if (isNode(node, "ElvaxH3StageSettings")) {
+      if (!node.__elvaxStageSettingsConfigureHook) {
+        node.__elvaxStageSettingsConfigureHook = true;
+        const originalConfigure = node.onConfigure;
+        node.onConfigure = function (...args) {
+          const result = originalConfigure?.apply(this, args);
+          requestAnimationFrame(() => installTransitionModeTooltip(this));
+          return result;
+        };
+      }
+      requestAnimationFrame(() => installTransitionModeTooltip(node));
+      return;
+    }
+
+    const isPreviewSampler =
+      node.type === "ElvaxH3SamplerPreview" ||
+      node.comfyClass === "ElvaxH3SamplerPreview" ||
+      node.type === "ElvaxH3SamplerPreviewV2" ||
+      node.comfyClass === "ElvaxH3SamplerPreviewV2";
     const isSampler =
       node.type === "ElvaxH3ExtensionSampler" ||
-      node.comfyClass === "ElvaxH3ExtensionSampler";
-    const isReferenceSampler =
-      node.type === "ElvaxH3ExtensionReferenceSampler" ||
-      node.comfyClass === "ElvaxH3ExtensionReferenceSampler";
-    if (!isSampler && !isReferenceSampler) return;
+      node.comfyClass === "ElvaxH3ExtensionSampler" ||
+      isPreviewSampler;
+    if (!isSampler) return;
 
     if (!node.__elvaxSamplerConfigureHook) {
       node.__elvaxSamplerConfigureHook = true;
       const originalConfigure = node.onConfigure;
       node.onConfigure = function (...args) {
         const result = originalConfigure?.apply(this, args);
+        const configuredSize = this.size?.slice();
         requestAnimationFrame(() => {
           const before = this.inputs?.slice();
           reorderSamplerInputs(this);
           installTransitionModeTooltip(this);
           installDurationControls(this);
           if (before && before.some((input, index) => input !== this.inputs[index])) {
-            this.setSize(this.computeSize());
+            this.setSize(isPreviewSampler && configuredSize
+              ? configuredSize
+              : this.computeSize());
             this.graph?.setDirtyCanvas(true, true);
           }
         });
@@ -376,12 +473,15 @@ app.registerExtension({
     // Optional sockets are added after nodeCreated in the current frontend.
     // Defer one frame, but only for this exact custom-node instance.
     requestAnimationFrame(() => {
+      const originalSize = node.size?.slice();
       const before = node.inputs?.slice();
       reorderSamplerInputs(node);
       installTransitionModeTooltip(node);
       installDurationControls(node);
       if (before && before.some((input, index) => input !== node.inputs[index])) {
-        node.setSize(node.computeSize());
+        node.setSize(isPreviewSampler && originalSize
+          ? originalSize
+          : node.computeSize());
         node.graph?.setDirtyCanvas(true, true);
       }
     });

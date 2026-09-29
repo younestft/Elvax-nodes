@@ -36,12 +36,16 @@ class LLMTurbo(io.ComfyNode):
     @classmethod
     def define_schema(cls):
         images = io.Autogrow.TemplateNames(
-            input=io.Image.Input("image"),
+            input=io.Image.Input(
+                "image",
+                tooltip="Needs a GGUF model with vision support like Qwen or Gemma."),
             names=IMAGE_INPUT_NAMES,
             min=0,
         )
         audios = io.Autogrow.TemplateNames(
-            input=io.Audio.Input("audio"),
+            input=io.Audio.Input(
+                "audio",
+                tooltip="Needs a GGUF model with audio input support like Gemma4 12b."),
             names=AUDIO_INPUT_NAMES,
             min=0,
         )
@@ -49,18 +53,26 @@ class LLMTurbo(io.ComfyNode):
             node_id="ElvaxLLMTurbo",
             display_name="LLM Turbo",
             category="Elvax",
-            description="Run a local GGUF model with optional image and audio inputs.",
+            description=(
+                "Run a local GGUF model through llama.cpp for fast inference in "
+                "ComfyUI. Use dynamically growing image and audio inputs, "
+                "including image batches, alongside system and user prompts. "
+                "Supports MTP."),
             inputs=[
                 io.Combo.Input(
                     "model", options=model_options(),
-                    tooltip="GGUF model from configured LLM or text_encoders folders."),
+                    tooltip='GGUF LLM model, put in "models/LLM" or "models/text_encoders" folders.'),
                 io.Combo.Input(
                     "mmproj", options=mmproj_options(), default=NO_MMPROJ,
-                    tooltip="Matching multimodal projector GGUF for image or audio input."),
+                    tooltip=(
+                        "Projector GGUF for image or audio input for models that support those. "
+                        "Put in the same folder as the GGUF model.")),
                 io.Combo.Input(
                     "mtp_model", options=mtp_model_options(),
                     default=NO_MTP_MODEL,
-                    tooltip="Optional MTP GGUF draft model for speculative decoding."),
+                    tooltip=(
+                        "Optional MTP GGUF draft model for speculative decoding, for models that "
+                        "support it. Put in the same folder as the GGUF model.")),
                 io.String.Input("system_prompt", default="", multiline=True,
                                 dynamic_prompts=True),
                 io.String.Input("user_prompt", default="Describe this image in detail.",
@@ -78,10 +90,14 @@ class LLMTurbo(io.ComfyNode):
                 io.Combo.Input("reasoning", options=["auto", "on", "off"], default="off"),
                 io.Autogrow.Input(
                     "images", optional=True, template=images,
-                    tooltip="Up to nine image inputs. Each input may contain an image batch."),
+                    tooltip=(
+                        "Needs a GGUF model with vision support like Qwen or Gemma. "
+                        "Up to nine image inputs. Each input may contain an image batch.")),
                 io.Autogrow.Input(
                     "audios", optional=True, template=audios,
-                    tooltip="Up to nine audio inputs. Audio batches are sent as separate files."),
+                    tooltip=(
+                        "Needs a GGUF model with audio input support like Gemma4 12b. "
+                        "Up to nine audio inputs. Audio batches are sent as separate files.")),
                 io.Combo.Input(
                     "flash_attention", options=list(FLASH_ATTENTION_OPTIONS),
                     default="auto",
@@ -98,7 +114,11 @@ class LLMTurbo(io.ComfyNode):
             outputs=[
                 io.String.Output("response"),
                 io.String.Output("reasoning"),
-                io.String.Output("stats"),
+                io.String.Output(
+                    "stats",
+                    tooltip=(
+                        "Shows total node runtime and llama.cpp generation-speed "
+                        "statistics.")),
             ],
         )
 

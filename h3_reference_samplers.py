@@ -6,9 +6,13 @@ from that GPL-3.0 project; see the attribution below and the pack LICENSE.
 """
 
 import re
+import sys
+from fractions import Fraction
 
+import comfy.patcher_extension
+import folder_paths
 import nodes
-from comfy_api.latest import io
+from comfy_api.latest import InputImpl, Types, io
 from comfy_execution.graph_utils import ExecutionBlocker
 from comfy_extras.nodes_audio import vae_decode_audio
 from comfy_extras.nodes_custom_sampler import (
@@ -17,6 +21,7 @@ from comfy_extras.nodes_custom_sampler import (
     SamplerCustomAdvanced,
 )
 from comfy_extras.nodes_minimax_h3 import MiniMaxH3ReferenceToVideo
+from comfy_extras.nodes_video import save_video_preview
 
 from .h3_extension_sampler import (
     H3ExtensionBridge,
@@ -28,7 +33,7 @@ from .h3_extension_sampler import (
 
 # Shared wire type and payload format with ethanfel/ComfyUI-H3-Prompt-IDE.
 H3_PROMPT_REFERENCES = io.Custom("H3_PROMPT_REFERENCES")
-H3_EXTENSION_DATA = io.Custom("ELVAX_H3_EXTENSION_DATA")
+H3_SAMPLER_SETTINGS = io.Custom("ELVAX_H3_SAMPLER_SETTINGS")
 
 PICTURE_NAMES = [f"<Picture {index}>" for index in range(1, 10)]
 VIDEO_NAMES = [f"<Video {index}>" for index in range(1, 4)]
@@ -85,7 +90,7 @@ def _reference_slots(records, prefix, maximum):
 def _native_reference_inputs(references):
     if not isinstance(references, dict) or not isinstance(references.get("references"), list):
         raise ValueError(
-            "h3_reference_sampler: references must come from an H3 Reference Inputs node.")
+            "h3_reference_sampler: references must come from an H3 References node.")
 
     records = references["references"]
     if any(not isinstance(item, dict) for item in records):
@@ -222,79 +227,6 @@ def _stage_preview(sampled_latent, video_vae, audio_vae, trim_frames, enabled):
     )
 
 
-def _make_extension_data(latent, clip, video_vae, audio_vae, width, height,
-                         ref_image_size, sampler, sigmas, initial_duration_s,
-                         first_stage):
-    return {
-        "version": 1,
-        "stage_history_version": 1,
-        "stage_history_complete": True,
-        "stages": [first_stage],
-        "latent": latent,
-        "clip": clip,
-        "video_vae": video_vae,
-        "audio_vae": audio_vae,
-        "width": int(width),
-        "height": int(height),
-        "ref_image_size": ref_image_size,
-        "sampler": sampler,
-        "sigmas": sigmas,
-        "initial_duration_s": float(initial_duration_s),
-    }
-
-
-def _stage_record(prompt, references, sampled_latent, trimmed_stage_latent,
-                  duration_frames, transition_mode=None,
-                  video_context_length=None, audio_context_length=None,
-                  trim_frames=0, previous_latent=None):
-    sampled_video, sampled_audio = H3ExtensionLatentTrim._streams(
-        sampled_latent, "sampled_latent")
-    stage_video, stage_audio = H3ExtensionLatentTrim._streams(
-        trimmed_stage_latent, "trimmed_stage_latent")
-
-    if previous_latent is None:
-        video_start = audio_start = 0
-    else:
-        previous_video, previous_audio = H3ExtensionLatentTrim._streams(
-            previous_latent, "previous_latent")
-        video_start = int(previous_video.shape[2])
-        audio_start = int(previous_audio.shape[-1])
-
-    return {
-        "prompt": prompt,
-        "references": references,
-        "sampled_latent": sampled_latent,
-        "duration_frames": int(duration_frames),
-        "transition_mode": transition_mode,
-        "video_context_length": video_context_length,
-        "audio_context_length": audio_context_length,
-        "trim_frames": int(trim_frames),
-        "video_trim_steps": int(sampled_video.shape[2] - stage_video.shape[2]),
-        "audio_trim_steps": int(sampled_audio.shape[-1] - stage_audio.shape[-1]),
-        "video_chain_start": video_start,
-        "audio_chain_start": audio_start,
-        "video_chain_steps": int(stage_video.shape[2]),
-        "audio_chain_steps": int(stage_audio.shape[-1]),
-    }
-
-
-def _validate_extension_data(data):
-    fields = (
-        "latent", "clip", "video_vae", "audio_vae", "width", "height",
-        "ref_image_size", "sampler", "sigmas",
-        "initial_duration_s",
-    )
-    if not isinstance(data, dict) or data.get("version") != 1:
-        raise ValueError(
-            "h3_extension_sampler: extension_in must come from H3 Initial "
-            "Reference Sampler or H3 Extension Reference Sampler.")
-    missing = [key for key in fields if key not in data]
-    if missing:
-        raise ValueError(
-            "h3_extension_sampler: extension_in is missing %s."
-            % ", ".join(missing))
-
-
 class H3ReferenceInputs(io.ComfyNode):
     """Collect H3 media with the same custom bundle contract as H3 Prompt IDE.
 
@@ -338,7 +270,7 @@ class H3ReferenceInputs(io.ComfyNode):
         )
         return io.Schema(
             node_id="ElvaxH3ReferenceInputs",
-            display_name="H3 Reference Inputs",
+            display_name="H3 References",
             category="text/H3 Prompt IDE",
             search_aliases=[
                 "h3 ref input",
@@ -347,9 +279,8 @@ class H3ReferenceInputs(io.ComfyNode):
                 "minimax picture video audio references",
             ],
             description=(
-                "Authoring references for H3 Prompt IDE. Picture, video-frame, "
-                "and audio sockets auto-grow with native MiniMax H3 labels. "
-                "Connect the references output to the editor."),
+                "Bundle picture, video, and audio references with MiniMax H3 "
+                "token labels for use in H3 Stage Settings."),
             inputs=[
                 io.Autogrow.Input(
                     "pictures", optional=True, template=pictures,
@@ -390,104 +321,75 @@ class H3ReferenceInputs(io.ComfyNode):
         })
 
 
-class H3InitialReferenceSampler(io.ComfyNode):
+class H3ChainSettings(io.ComfyNode):
     @classmethod
     def define_schema(cls):
         return io.Schema(
-            node_id="ElvaxH3InitialReferenceSampler",
-            display_name="H3 Initial Reference Sampler",
+            node_id="ElvaxH3ChainSettings",
+            display_name="H3 Chain Settings",
             category="sampling/minimax",
             description=(
-                "Build native H3 reference conditioning and sample the first "
-                "stage. Preview off skips video/audio preview decoding."),
+                "Configure the shared settings for a MiniMax H3 extension chain."),
             inputs=[
-                io.Model.Input("model"),
                 io.Clip.Input("clip"),
                 io.Vae.Input("video_vae"),
                 io.Vae.Input("audio_vae"),
                 io.Sampler.Input("sampler"),
                 io.Sigmas.Input("sigmas"),
-                H3_PROMPT_REFERENCES.Input("references"),
-                io.String.Input("prompt", multiline=True, dynamic_prompts=True),
-                io.Int.Input(
-                    "seed", default=0, min=0, max=0xffffffffffffffff,
-                    control_after_generate=True),
                 io.Int.Input("width", default=1344, min=32, max=nodes.MAX_RESOLUTION, step=32),
                 io.Int.Input("height", default=768, min=32, max=nodes.MAX_RESOLUTION, step=32),
-                io.Float.Input(
-                    "duration_s",
-                    default=124 / H3_FPS,
-                    min=MIN_H3_FRAMES / H3_FPS,
-                    max=MAX_H3_FRAMES / H3_FPS,
-                    step=H3_FRAME_STEP / H3_FPS,
+                io.Combo.Input(
+                    "ref_image_size",
+                    options=["match", "max"],
+                    default="match",
                     tooltip=(
-                        "Duration in seconds. Steps follow valid H3 lengths; "
-                        "typed values round up to a valid length when sampling.")),
-                io.Combo.Input("ref_image_size", options=["match", "max"], default="match"),
-                io.Boolean.Input(
-                    "enable_preview", default=True,
-                    tooltip=(
-                        "Off skips decoding the stage preview and blocks both "
-                        "preview outputs, even if they are connected.")),
+                        "Reference image sizing. 'match' scales each ref "
+                        "(down only, keeping aspect) to the generation's pixel "
+                        "area; 'max' uses the reference pipeline's 2048px short "
+                        "edge for best identity fidelity. Reference tokens ride "
+                        "through every sampling step, so 'max' can be several "
+                        "times slower.")),
             ],
-            outputs=[
-                H3_EXTENSION_DATA.Output("extension_out"),
-                io.Latent.Output("latent"),
-                io.Image.Output("preview_images"),
-                io.Audio.Output("preview_audio"),
-            ],
+            outputs=[H3_SAMPLER_SETTINGS.Output("chain_settings")],
         )
 
     @classmethod
-    def execute(cls, model, clip, video_vae, audio_vae, sampler, sigmas,
-                references, prompt, width, height, duration_s, ref_image_size,
-                seed, enable_preview):
-        conditioning, base_latent = _build_reference_conditioning(
-            clip, references, prompt, width, height,
-            _duration_to_h3_frames(duration_s), ref_image_size,
-            video_vae, audio_vae)
-        sampled_latent = _sample(
-            model, conditioning, base_latent, seed, sampler, sigmas)
-        trimmed_stage_latent = sampled_latent
-        duration_frames = _duration_to_h3_frames(duration_s)
-        first_stage = _stage_record(
-            prompt, references, sampled_latent, trimmed_stage_latent,
-            duration_frames,
-        )
-        preview_images, preview_audio = _stage_preview(
-            sampled_latent, video_vae, audio_vae, 0, enable_preview)
-        extension_out = _make_extension_data(
-            sampled_latent, clip, video_vae, audio_vae, width, height,
-            ref_image_size, sampler, sigmas,
-            duration_frames / H3_FPS, first_stage)
-        return io.NodeOutput(
-            extension_out, sampled_latent, preview_images, preview_audio)
+    def execute(cls, clip, video_vae, audio_vae, sampler, sigmas,
+                width, height, ref_image_size):
+        return io.NodeOutput({
+            "version": 1,
+            "chain": {
+                "clip": clip,
+                "video_vae": video_vae,
+                "audio_vae": audio_vae,
+                "sampler": sampler,
+                "sigmas": sigmas,
+                "width": int(width),
+                "height": int(height),
+                "ref_image_size": ref_image_size,
+            },
+        })
 
 
-class H3ExtensionReferenceSampler(io.ComfyNode):
+class H3StageSettings(io.ComfyNode):
     @classmethod
     def define_schema(cls):
         return io.Schema(
-            node_id="ElvaxH3ExtensionReferenceSampler",
-            display_name="H3 Extension Reference Sampler",
+            node_id="ElvaxH3StageSettings",
+            display_name="H3 Stage Settings",
             category="sampling/minimax",
             description=(
-                "Continue the H3 latent chain using stage-specific references "
-                "and prompt. Hard Cut is latent-only; final VAE decoding may "
-                "soften the seam. Preview off skips stage preview decoding."),
+                "Configure each stage of a MiniMax H3 extension chain independently."),
             inputs=[
-                H3_EXTENSION_DATA.Input("extension_in"),
-                io.Model.Input("model"),
-                H3_PROMPT_REFERENCES.Input("references"),
+                H3_SAMPLER_SETTINGS.Input("chain_settings"),
+                io.Model.Input(
+                    "model",
+                    tooltip="You can connect this stage's custom Loras here"),
+                H3_PROMPT_REFERENCES.Input("references", optional=True),
                 io.String.Input("prompt", multiline=True, dynamic_prompts=True),
                 io.Int.Input(
                     "seed", default=0, min=0, max=0xffffffffffffffff,
                     control_after_generate=True),
-                io.Boolean.Input(
-                    "use_initial_duration", default=False,
-                    tooltip=(
-                        "Use the duration selected in H3 Initial Reference "
-                        "Sampler. When enabled, the local duration field is ignored.")),
                 io.Float.Input(
                     "duration_s",
                     default=124 / H3_FPS,
@@ -495,110 +397,275 @@ class H3ExtensionReferenceSampler(io.ComfyNode):
                     max=MAX_H3_FRAMES / H3_FPS,
                     step=H3_FRAME_STEP / H3_FPS,
                     tooltip=(
-                        "Duration in seconds. Steps follow valid H3 lengths; "
-                        "typed values round up to a valid length when sampling.")),
+                        "Duration in seconds. typed values round up to the "
+                        "closest valid H3 length when sampling.")),
                 io.Combo.Input(
                     "transition_mode",
                     options=["motion context", "hard cut"],
                     default="motion context",
                     tooltip=(
                         "Motion Context continues from the prior latent context. "
-                        "Hard Cut removes the repeated latent head; it is not a "
-                        "pixel-space cut.")),
+                        "Hard Cut starts a new joined video")),
                 io.Int.Input(
                     "video_context_length", default=22, min=5, max=56, step=17,
-                    tooltip="Motion Context window. Supported values: 5, 22, 39, 56."),
+                    tooltip=(
+                        "Motion Context video window. Supported values: "
+                        "5, 22, 39, 56.")),
                 io.Int.Input(
                     "audio_context_length", default=24, min=0, max=240, step=1,
                     tooltip="Motion Context audio window; 24 is about one second at 24 fps."),
-                io.Boolean.Input(
-                    "enable_preview", default=True,
-                    tooltip=(
-                        "Off skips decoding the stage preview and blocks both "
-                        "preview outputs, even if they are connected.")),
             ],
-            outputs=[
-                H3_EXTENSION_DATA.Output("extension_out"),
-                io.Latent.Output("chain_latent"),
-                io.Image.Output("preview_images"),
-                io.Audio.Output("preview_audio"),
-            ],
+            outputs=[H3_SAMPLER_SETTINGS.Output("sampler_settings")],
         )
 
     @classmethod
-    def execute(cls, extension_in, model, references, prompt, seed,
-                use_initial_duration, duration_s,
+    def execute(cls, chain_settings, model, prompt, seed, duration_s,
                 transition_mode, video_context_length, audio_context_length,
-                enable_preview):
-        _validate_extension_data(extension_in)
-        previous_latent = extension_in["latent"]
-        if use_initial_duration:
-            duration_s = extension_in["initial_duration_s"]
-        conditioning, base_latent = _build_reference_conditioning(
-            extension_in["clip"], references, prompt,
-            extension_in["width"], extension_in["height"],
-            _duration_to_h3_frames(duration_s),
-            extension_in["ref_image_size"], extension_in["video_vae"],
-            extension_in["audio_vae"])
+                references=None):
+        if (not isinstance(chain_settings, dict)
+                or chain_settings.get("version") != 1
+                or "chain" not in chain_settings):
+            raise ValueError(
+                "h3_stage_settings: connect H3 Chain Settings to "
+                "chain_settings.")
+        settings = {
+            "version": 1,
+            "chain": chain_settings["chain"],
+            "stage": {
+                "model": model,
+                "references": references,
+                "prompt": prompt,
+                "seed": int(seed),
+                "duration_s": float(duration_s),
+                "transition_mode": transition_mode,
+                "video_context_length": int(video_context_length),
+                "audio_context_length": int(audio_context_length),
+            },
+        }
+        return io.NodeOutput(settings)
 
-        trim_frames = 0
+
+def _sample_h3_stage(sampler_settings, previous_latent):
+    if (not isinstance(sampler_settings, dict)
+            or sampler_settings.get("version") != 1
+            or "stage" not in sampler_settings):
+        raise ValueError(
+            "h3_sampler_preview: connect H3 Stage Settings to "
+            "sampler_settings before sampling.")
+    chain = sampler_settings["chain"]
+    stage = sampler_settings["stage"]
+    duration_frames = _duration_to_h3_frames(stage["duration_s"])
+    conditioning, base_latent = _build_reference_conditioning(
+        chain["clip"], stage["references"], stage["prompt"],
+        chain["width"], chain["height"], duration_frames,
+        chain["ref_image_size"], chain["video_vae"], chain["audio_vae"])
+
+    trim_frames = 0
+    if previous_latent is None:
+        sampled_latent = _sample(
+            stage["model"], conditioning, base_latent, stage["seed"],
+            chain["sampler"], chain["sigmas"])
+        chain_latent = sampled_latent
+    else:
+        transition_mode = stage["transition_mode"]
         if transition_mode == "motion context":
             conditioning, base_latent, trim_frames = H3ExtensionBridge().bridge(
                 previous_latent=previous_latent,
                 conditioning=conditioning,
                 latent=base_latent,
-                video_vae=extension_in["video_vae"],
-                context_length=str(video_context_length),
-                audio_context_length=audio_context_length,
+                video_vae=chain["video_vae"],
+                context_length=str(stage["video_context_length"]),
+                audio_context_length=stage["audio_context_length"],
             )
         elif transition_mode == "hard cut":
-            H3ExtensionLatentTrim.validate_compatible(base_latent, previous_latent)
+            H3ExtensionLatentTrim.validate_compatible(
+                base_latent, previous_latent)
             trim_frames = 5
         else:
             raise ValueError(
-                "h3_extension_sampler: unsupported transition mode %r." % transition_mode)
+                "h3_sampler_preview: unsupported transition mode %r."
+                % transition_mode)
 
         sampled_latent = _sample(
-            model, conditioning, base_latent, seed,
-            extension_in["sampler"], extension_in["sigmas"])
-        chain_latent, trimmed_stage_latent = (
-            H3ExtensionLatentTrim().trim_latent_and_stage(
-                sampled_latent,
-                trim_frames,
-                previous_latent,
-                hard_cut=transition_mode == "hard cut",
-            )
-        )
-        preview_images, preview_audio = _stage_preview(
+            stage["model"], conditioning, base_latent, stage["seed"],
+            chain["sampler"], chain["sigmas"])
+        chain_latent, _stage_latent = H3ExtensionLatentTrim().trim_latent_and_stage(
             sampled_latent,
-            extension_in["video_vae"],
-            extension_in["audio_vae"],
             trim_frames,
-            enable_preview,
+            previous_latent,
+            hard_cut=transition_mode == "hard cut",
         )
-        next_extension_out = dict(extension_in)
-        next_extension_out["latent"] = chain_latent
-        prior_stages = extension_in.get("stages")
-        history_complete = (
-            extension_in.get("stage_history_version") == 1
-            and extension_in.get("stage_history_complete") is True
-            and isinstance(prior_stages, list)
+
+    return chain_latent, sampled_latent, trim_frames, chain
+
+
+class H3SamplerPreview(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(
+            node_id="ElvaxH3SamplerPreview",
+            display_name="H3 Sampler Preview",
+            category="sampling/minimax",
+            description=(
+                "Sample a stage, optionally show a live tiny-VAE preview during "
+                "sampling or decode a full video preview, and pass the "
+                "accumulated latent to the next stage."),
+            inputs=[
+                io.Latent.Input(
+                    "previous_latent", optional=True,
+                    tooltip=(
+                        "Previous chain_latent from \"H3 Sampler Preview\" "
+                        "(Leave unconnected for the first stage)")),
+                H3_SAMPLER_SETTINGS.Input("sampler_settings"),
+                io.Combo.Input(
+                    "tiny_vae",
+                    options=["none"] + folder_paths.get_filename_list("vae_approx"),
+                    default="none",
+                    tooltip=(
+                        "Optional tiny VAE for live preview during sampling. "
+                        "Place H3 tiny vae in: \"models\\vae_approx\".")),
+                io.Boolean.Input(
+                    "preview_result", default=True,
+                    tooltip="Decode and preview this stage's video (takes time to decode it)"),
+            ],
+            outputs=[io.Latent.Output("chain_latent")],
+            hidden=[io.Hidden.unique_id],
         )
-        stages = list(prior_stages) if isinstance(prior_stages, list) else []
-        stages.append(_stage_record(
-            prompt,
-            references,
-            sampled_latent,
-            trimmed_stage_latent,
-            _duration_to_h3_frames(duration_s),
-            transition_mode=transition_mode,
-            video_context_length=int(video_context_length),
-            audio_context_length=int(audio_context_length),
-            trim_frames=trim_frames,
-            previous_latent=previous_latent,
+
+    @classmethod
+    def execute(cls, sampler_settings, tiny_vae, preview_result,
+                previous_latent=None):
+        sampling_settings = sampler_settings
+        if tiny_vae and tiny_vae != "none":
+            kj_node = nodes.NODE_CLASS_MAPPINGS.get("ModelPreviewOverrideKJ")
+            kj_module = sys.modules.get(kj_node.__module__) if kj_node else None
+            try:
+                preview_wrapper = kj_module._PreviewOverrideWrapper
+            except AttributeError as error:
+                raise RuntimeError(
+                    "H3 Sampler Preview live previews require the "
+                    "KJNodes Model Preview Override component.") from error
+
+            sampling_settings = dict(sampler_settings)
+            stage = dict(sampler_settings["stage"])
+            model = stage["model"].clone()
+            model.add_wrapper_with_key(
+                comfy.patcher_extension.WrappersMP.OUTER_SAMPLE,
+                "elvax_h3_sampler_preview",
+                preview_wrapper(
+                    max_resolution=1024,
+                    node_id=cls.hidden.unique_id,
+                    jpeg_quality=80,
+                    suppress_default=True,
+                    preview_frames=1024,
+                    preview_fps=12,
+                    tiny_vae=tiny_vae,
+                ),
+            )
+            stage["model"] = model
+            sampling_settings["stage"] = stage
+
+        chain_latent, sampled_latent, trim_frames, chain = _sample_h3_stage(
+            sampling_settings, previous_latent)
+        if not preview_result:
+            if tiny_vae and tiny_vae != "none":
+                return io.NodeOutput(
+                    chain_latent, ui={"elvax_h3_live_preview": [True]})
+            return io.NodeOutput(chain_latent)
+
+        images, audio = _stage_preview(
+            sampled_latent, chain["video_vae"], chain["audio_vae"],
+            trim_frames, True)
+        video = InputImpl.VideoFromComponents(Types.VideoComponents(
+            images=images,
+            audio=audio,
+            frame_rate=Fraction(H3_FPS),
         ))
-        next_extension_out["stage_history_version"] = 1
-        next_extension_out["stage_history_complete"] = history_complete
-        next_extension_out["stages"] = stages
-        return io.NodeOutput(
-            next_extension_out, chain_latent, preview_images, preview_audio)
+        preview = save_video_preview(video).as_dict()
+        return io.NodeOutput(chain_latent, ui={"elvax_h3_video": preview["images"]})
+
+
+class H3SamplerPreviewV2(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(
+            node_id="ElvaxH3SamplerPreviewV2",
+            display_name="H3 Sampler Preview v2",
+            category="sampling/minimax",
+            description=(
+                "Sample a stage, optionally show a live tiny-VAE preview during "
+                "sampling or decode a full video preview, and pass the "
+                "accumulated latent to the next stage."),
+            inputs=[
+                io.Latent.Input(
+                    "previous_latent", optional=True,
+                    tooltip=(
+                        "Previous chain_latent from \"H3 Sampler Preview\" "
+                        "(Leave unconnected for the first stage)")),
+                H3_SAMPLER_SETTINGS.Input("sampler_settings"),
+                io.Combo.Input(
+                    "tiny_vae",
+                    options=["none"] + folder_paths.get_filename_list("vae_approx"),
+                    default="none",
+                    tooltip=(
+                        "Optional tiny VAE for live preview during sampling. "
+                        "Place H3 tiny vae in: \"models\\vae_approx\".")),
+                io.Boolean.Input(
+                    "preview_result", default=True,
+                    tooltip="Decode and preview this stage's video (takes time to decode it)"),
+            ],
+            outputs=[io.Latent.Output("chain_latent")],
+            hidden=[io.Hidden.unique_id],
+        )
+
+    @classmethod
+    def execute(cls, sampler_settings, tiny_vae, preview_result,
+                previous_latent=None):
+        sampling_settings = sampler_settings
+        if tiny_vae and tiny_vae != "none":
+            kj_node = nodes.NODE_CLASS_MAPPINGS.get("ModelPreviewOverrideKJ")
+            kj_module = sys.modules.get(kj_node.__module__) if kj_node else None
+            try:
+                preview_wrapper = kj_module._PreviewOverrideWrapper
+            except AttributeError as error:
+                raise RuntimeError(
+                    "H3 Sampler Preview v2 live previews require the "
+                    "KJNodes Model Preview Override component.") from error
+
+            sampling_settings = dict(sampler_settings)
+            stage = dict(sampler_settings["stage"])
+            model = stage["model"].clone()
+            model.add_wrapper_with_key(
+                comfy.patcher_extension.WrappersMP.OUTER_SAMPLE,
+                "elvax_h3_sampler_preview_v2",
+                preview_wrapper(
+                    max_resolution=1024,
+                    node_id=cls.hidden.unique_id,
+                    jpeg_quality=80,
+                    suppress_default=True,
+                    preview_frames=1024,
+                    preview_fps=12,
+                    tiny_vae=tiny_vae,
+                ),
+            )
+            stage["model"] = model
+            sampling_settings["stage"] = stage
+
+        chain_latent, sampled_latent, trim_frames, chain = _sample_h3_stage(
+            sampling_settings, previous_latent)
+        if not preview_result:
+            if tiny_vae and tiny_vae != "none":
+                return io.NodeOutput(
+                    chain_latent, ui={"elvax_h3_live_preview": [True]})
+            return io.NodeOutput(chain_latent)
+
+        images, audio = _stage_preview(
+            sampled_latent, chain["video_vae"], chain["audio_vae"],
+            trim_frames, True)
+        video = InputImpl.VideoFromComponents(Types.VideoComponents(
+            images=images,
+            audio=audio,
+            frame_rate=Fraction(H3_FPS),
+        ))
+        preview = save_video_preview(video).as_dict()
+        return io.NodeOutput(chain_latent, ui={"elvax_h3_video": preview["images"]})

@@ -13,6 +13,10 @@ when available. GPU and CPU layer placement use llama.cpp defaults. On supported
 Windows CUDA systems, the node can download its pinned llama.cpp release if a
 matching local binary is not already available.
 
+![LLM Turbo](assets/llm-turbo.gif)
+
+![LLM Turbo low-resource configuration](assets/llm-turbo-low.gif)
+
 ## Dynamic Pipe In / Dynamic Pipe Out
 
 Organize multiple connections as one cable. Dynamic Pipe In begins with one
@@ -20,30 +24,31 @@ input and adds the next empty input when a value is connected. Dynamic Pipe Out
 then creates matching named outputs when the pipe is connected. The nodes carry
 data only; they do not alter the values or improve inference performance.
 
+![Dynamic Pipe In and Dynamic Pipe Out](assets/dynamic-pipes.gif)
+
 ## Load/Crop Image
 
 Loads an image with the familiar ComfyUI upload control and adds an interactive
 crop box. Apply the crop to use it as the node's `IMAGE` output, crop again as
 needed, or restore the original image. The node also outputs the matching mask.
 
-## H3 Reference Samplers
+![Load/Crop Image](assets/load-crop.gif)
 
-`H3 Initial Reference Sampler` builds native MiniMax H3 reference conditioning
-from a prompt and an `H3 Reference Inputs` bundle, then samples the first stage.
-`H3 Extension Reference Sampler` builds the next stage's conditioning and
-extends the latent chain. It carries the initial CLIP, VAEs, dimensions,
-reference sizing, sampler, sigmas, and duration through `extension_out`; each
-extension still accepts its own model, reference bundle, prompt, duration, and
-seed. Durations snap to H3's valid frame counts. Enable `use_initial_duration`
-on an extension to reuse the initial sampler's duration instead of its local
-`duration_s` value.
+## H3 Staged Samplers
 
-`motion context` carries prior latent context into the next stage. `hard cut`
-trims and joins the latent only; decoding the final chain may soften a few seam
-frames. The `enable_preview` true/false toggle skips stage-preview decoding and
-blocks both preview outputs when false.
+`H3 Chain Settings` holds the shared CLIP, VAEs, sampler, sigmas, dimensions,
+and reference sizing. Connect it to each `H3 Stage Settings` node; configure
+each stage's model, references, prompt, seed, duration, and transition there.
+Connect each stage's settings to `H3 Sampler Preview`, then chain its
+`chain_latent` output into the next preview node's `previous_latent` input.
+`motion context` carries prior latent context; `hard cut` joins without it and
+trims the new stage's first five video frames.
 
-The bundled `H3 Reference Inputs` node uses the same `H3_PROMPT_REFERENCES`
+`H3 Sampler Preview` can show live previews with a selected tiny VAE and create
+a final video preview. The `preview_result` toggle controls only the final
+video; live previews remain enabled whenever `tiny_vae` is selected.
+
+The bundled `H3 References` node uses the same `H3_PROMPT_REFERENCES`
 wire type and payload as the H3 Prompt IDE reference node. It works with the
 new samplers without the Prompt IDE pack. When the Prompt IDE is installed, its
 reference palette and previews recognize the Elvax node ID through a small
@@ -95,7 +100,7 @@ The H3 Extension Sampler is a modified derivative of
 by NikoDemon80. It retains GPL-licensed H3 layout checks, latent-tail slicing,
 and timeline-aligned audio-continuation logic.
 
-The bundled H3 Reference Inputs node is adapted from the GPL-3.0-licensed
+The bundled H3 References node is adapted from the GPL-3.0-licensed
 [ComfyUI-H3-Prompt-IDE](https://github.com/ethanfel/ComfyUI-H3-Prompt-IDE) by
 Ethan Fel. It preserves the input socket labels and reference bundle contract.
 

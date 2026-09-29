@@ -11,7 +11,8 @@ class DynamicPipeIn:
     RETURN_TYPES = (PIPE_TYPE,)
     RETURN_NAMES = ("pipe",)
     FUNCTION = "pack"
-    DESCRIPTION = "Collect dynamically added connections into one ordered pipe."
+    DESCRIPTION = ("Bundle connected values in input order for transport through "
+                   "a single pipe.")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -39,7 +40,8 @@ class DynamicPipeOut:
     RETURN_TYPES = ("*",) * MAX_PIPE_SLOTS
     RETURN_NAMES = tuple("value_%d" % index for index in range(1, MAX_PIPE_SLOTS + 1))
     FUNCTION = "unpack"
-    DESCRIPTION = "Expose the values stored in an Elvax Dynamic Pipe."
+    DESCRIPTION = ("Unpack a pipe into separate outputs in the original input "
+                   "order.")
 
     @classmethod
     def INPUT_TYPES(cls):
