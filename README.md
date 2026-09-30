@@ -57,7 +57,8 @@ independently.
 `H3 Sampler Preview`: Sample a stage, optionally show a live tiny-VAE preview
 during sampling or decode a full video preview, and pass the accumulated latent
 to the next stage. The `preview_result` toggle controls full video decoding;
-live previews are available when a tiny VAE is selected.
+live previews are available when a tiny VAE is selected. Tiny-VAE H3 preview
+functionality is credited to Kijai and KJNodes.
 
 `H3 References`: Bundle picture, video, and audio references with MiniMax H3
 token labels for use in H3 Stage Settings. Audio slots 1–3 pair with their
