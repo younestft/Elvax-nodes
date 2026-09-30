@@ -9,8 +9,8 @@ class PromptEditPreview(io.ComfyNode):
             display_name="Prompt Edit / Preview",
             category="Elvax/text",
             description=(
-                "Edit text directly or preview a connected source. Enable "
-                "Edit mode to use the editable text instead of the source."),
+                "Preview and edit text in one node. Edit the preview text "
+                "with one click, then refine it before passing it downstream."),
             inputs=[
                 io.String.Input(
                     "source",

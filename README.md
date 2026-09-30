@@ -34,8 +34,8 @@ Reroutes!
 
 ## Prompt Edit / Preview
 
-One node to preview text from a connected source or edit it directly before
-passing it downstream. Switch modes to inspect or refine prompts in place.
+**Preview** and **edit** text in one node. Edit the preview text with one
+click, then refine it before passing it downstream.
 
 ![Prompt Edit / Preview](assets/prompt-edit-preview.gif)
 
