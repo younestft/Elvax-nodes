@@ -52,7 +52,7 @@ Hard Cut starts a fresh joined segment.
 chain.
 
 `H3 Stage Settings`: Configure each stage of a MiniMax H3 extension chain
-independently (supports custom Loras, and custom References for each stage)
+independently (supports custom Loras for each stage)
 
 `H3 Sampler Preview`: Sample a stage, optionally show a live tiny-VAE preview
 during sampling or decode a full video preview, and pass the accumulated latent
