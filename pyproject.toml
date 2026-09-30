@@ -1,0 +1,17 @@
+[project]
+name = "elvax-nodes"
+version = "1.0.0"
+description = "A ComfyUI node pack for MiniMax H3, prompt editing, image cropping, dynamic pipes, local GGUF inference, and video post-processing."
+license = { file = "LICENSE" }
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[project.urls]
+Repository = "https://github.com/younestft/Elvax-nodes"
+"Bug Tracker" = "https://github.com/younestft/Elvax-nodes/issues"
+
+[tool.comfy]
+PublisherId = "Elvaxorn"
+DisplayName = "Elvax Nodes"
