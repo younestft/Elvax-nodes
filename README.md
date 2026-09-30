@@ -75,6 +75,13 @@ decode workflow.
 
 ![H3 Custom Extension Sampler](assets/custom-extension.jpg)
 
+## Turbo Post Processing
+
+Upscale with Lanczos, interpolate with RIFE 4.9, and add film grain in one
+fast node, with optional low-VRAM processing.
+
+![Turbo Post Processing](assets/turbo-post-processing.jpg)
+
 ## Installation
 
 Clone this repository into `ComfyUI/custom_nodes`:
@@ -113,3 +120,9 @@ and timeline-aligned audio-continuation logic.
 The bundled H3 References node is adapted from the GPL-3.0-licensed
 [ComfyUI-H3-Prompt-IDE](https://github.com/ethanfel/ComfyUI-H3-Prompt-IDE) by
 Ethan Fel. It preserves the input socket labels and reference bundle contract.
+
+Turbo Post Processing brings together ComfyUI's native Lanczos image scaling,
+RIFE 4.9 interpolation from [Fill-Nodes](https://github.com/filliptm/ComfyUI_Fill-Nodes)
+by filliptm, and Fast Film Grain from
+[VRGameDevGirl's nodes](https://github.com/vrgamegirl19/comfyui-vrgamedevgirl).
+Credit to the Comfy Org team for the native ComfyUI scaling implementation.

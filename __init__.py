@@ -9,6 +9,7 @@ from .load_crop_image import LoadCropImage
 from .prompt_edit_preview import PromptEditPreview
 from .dynamic_pipe import DynamicPipeIn, DynamicPipeOut
 from .llm_turbo.nodes import LLMTurbo
+from .post_processing import PostProcessing
 
 
 NODE_CLASS_MAPPINGS = {
@@ -22,6 +23,7 @@ NODE_CLASS_MAPPINGS = {
     "ElvaxDynamicPipeIn": DynamicPipeIn,
     "ElvaxDynamicPipeOut": DynamicPipeOut,
     "ElvaxLLMTurbo": LLMTurbo,
+    "ElvaxPostProcessing": PostProcessing,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -35,6 +37,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ElvaxDynamicPipeIn": "Dynamic Pipe In",
     "ElvaxDynamicPipeOut": "Dynamic Pipe Out",
     "ElvaxLLMTurbo": "LLM Turbo",
+    "ElvaxPostProcessing": "Turbo Post Processing",
 }
 
 WEB_DIRECTORY = "./web"

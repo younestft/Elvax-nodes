@@ -1452,10 +1452,8 @@ class H3ExtensionLatentTrim:
         else:
             if hard_cut:
                 # Video was trimmed by the first two latent steps (5 frames).
-                # Since audio runs at 40 Hz and video at 24 fps, the required
-                # audio trim can be 8 or 9 latent steps after cumulative
-                # rounding. Start with the ordinary 8-step trim above, then
-                # apply one extra leading audio step if needed.
+                # Reconcile audio against the combined video timeline because
+                # per-stage rounding can accumulate across repeated Hard Cuts.
                 chain_frames = _pixel_frames(
                     int(previous_video.shape[2] + current_video.shape[2]))
                 target_audio_steps = int(round(
@@ -1463,12 +1461,18 @@ class H3ExtensionLatentTrim:
                 extra_audio_steps = (
                     int(previous_audio.shape[-1] + current_audio.shape[-1])
                     - target_audio_steps)
-                if extra_audio_steps not in (0, 1):
+                if extra_audio_steps < 0:
                     raise ValueError(
                         "h3_extension_sampler: cannot align the Hard Cut audio "
-                        "latent to the combined video timeline (extra trim %d)."
+                        "latent to the combined video timeline (audio is short "
+                        "by %d latent steps)."
                         % extra_audio_steps)
                 if extra_audio_steps:
+                    if extra_audio_steps >= current_audio.shape[-1]:
+                        raise ValueError(
+                            "h3_extension_sampler: Hard Cut alignment would remove "
+                            "the entire current-stage audio segment (%d latent steps)."
+                            % extra_audio_steps)
                     current_audio = current_audio[..., extra_audio_steps:].clone()
 
             stage = dict(latent)
