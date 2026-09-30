@@ -57,8 +57,7 @@ independently.
 `H3 Sampler Preview`: Sample a stage, optionally show a live tiny-VAE preview
 during sampling or decode a full video preview, and pass the accumulated latent
 to the next stage. The `preview_result` toggle controls full video decoding;
-live previews are available when a tiny VAE is selected. Tiny-VAE H3 preview
-functionality is credited to Kijai and KJNodes.
+live previews are available when a tiny VAE is selected.
 
 `H3 References`: Bundle picture, video, and audio references with MiniMax H3
 token labels for use in H3 Stage Settings. Audio slots 1–3 pair with their
@@ -99,6 +98,7 @@ This repository is licensed under GNU GPL v3 or later; see [LICENSE](LICENSE).
 
 Many nodes in this pack are based on or inspired by ComfyUI's native nodes.
 Credit to the Comfy Org team for ComfyUI and its native node implementations.
+The H3 tiny-VAE preview is credited to Kijai and KJNodes.
 
 LLM Turbo is adapted from the GPL-3.0-licensed
 [ComfyUI-LLM-text-processor](https://github.com/KingManiya/ComfyUI-LLM-text-processor)
