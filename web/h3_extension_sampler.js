@@ -4,6 +4,12 @@ const PIPE_IN = "ElvaxDynamicPipeIn";
 const PIPE_OUT = "ElvaxDynamicPipeOut";
 const MAX_PIPE_SLOTS = 32;
 const PIPE_DEFAULT_WIDTH = 260;
+const SAMPLER_NODE_TYPES = new Set([
+  "ElvaxH3ExtensionSampler",
+  "ElvaxH3SamplerPreview",
+  "ElvaxH3SamplerPreviewV2",
+]);
+const HOLLOW_CIRCLE_SHAPE = 7;
 const TRANSITION_MODE_TOOLTIPS = {
   "motion context":
     "Continues from the previous stage's latent context.",
@@ -282,53 +288,97 @@ function installDynamicPipe(node) {
   });
 }
 
-function putInputAt(inputs, name, index) {
-  const current = inputs.findIndex((input) => input.name === name);
-  if (current < 0 || current === index) return;
-  const [input] = inputs.splice(current, 1);
-  inputs.splice(index, 0, input);
+function moveInputBefore(items, name, beforeName) {
+  const current = items.findIndex(([itemName]) => itemName === name);
+  const target = items.findIndex(([itemName]) => itemName === beforeName);
+  if (current < 0 || target < 0 || current === target - 1) return items;
+  const [item] = items.splice(current, 1);
+  items.splice(items.findIndex(([itemName]) => itemName === beforeName), 0, item);
+  return items;
 }
 
-function putInputBefore(inputs, name, beforeName) {
-  const current = inputs.findIndex((input) => input.name === name);
-  const target = inputs.findIndex((input) => input.name === beforeName);
-  if (current < 0 || target < 0 || current === target - 1) return;
-  const [input] = inputs.splice(current, 1);
-  const targetAfterRemoval = inputs.findIndex((item) => item.name === beforeName);
-  inputs.splice(targetAfterRemoval, 0, input);
+function moveOptionalInputBefore(nodeData, name, beforeName) {
+  const optional = nodeData.input?.optional;
+  const required = nodeData.input?.required;
+  if (!optional?.[name] || !required) return;
+
+  const spec = optional[name];
+  delete optional[name];
+  const requiredEntries = Object.entries(required);
+  requiredEntries.splice(
+    Math.max(0, requiredEntries.findIndex(([inputName]) => inputName === beforeName)),
+    0,
+    [name, spec],
+  );
+  nodeData.input.required = Object.fromEntries(requiredEntries);
+
+  const inputOrder = nodeData.input_order ??= {};
+  inputOrder.optional = (inputOrder.optional ?? []).filter((inputName) => inputName !== name);
+  const requiredOrder = (inputOrder.required ?? Object.keys(required)).filter(
+    (inputName) => inputName !== name,
+  );
+  const targetIndex = requiredOrder.indexOf(beforeName);
+  requiredOrder.splice(targetIndex < 0 ? 0 : targetIndex, 0, name);
+  inputOrder.required = requiredOrder;
 }
 
-function reorderSamplerInputs(node) {
-  if (!Array.isArray(node.inputs)) return;
+function moveRequiredInputBefore(nodeData, name, beforeName) {
+  const required = nodeData.input?.required;
+  if (!required?.[name] || !required?.[beforeName]) return;
 
-  const before = node.inputs.slice();
-  const ordered = before.slice();
-  putInputAt(ordered, "previous_latent", 0);
-  putInputAt(ordered, "model", 1);
-  putInputBefore(ordered, "transition_mode", "video_context_length");
-  if (ordered.every((input, index) => input === before[index])) return;
+  nodeData.input.required = Object.fromEntries(
+    moveInputBefore(Object.entries(required), name, beforeName),
+  );
+  const inputOrder = nodeData.input_order ??= {};
+  inputOrder.required = moveInputBefore(
+    (inputOrder.required ?? Object.keys(required)).map((inputName) => [inputName]),
+    name,
+    beforeName,
+  ).map(([inputName]) => inputName);
+}
 
-  // Input objects keep their link ids when moved. Keep the graph's separate
-  // target_slot values in sync, preferring those ids to recover links left
-  // stale by an earlier version of this reorder.
-  const inputByLink = new Map();
-  for (const input of before) {
-    if (input.link != null) inputByLink.set(String(input.link), input);
+function setPreviousLatentSocketShape(node) {
+  const input = node.inputs?.find((item) => item.name === "previous_latent");
+  if (input && input.shape !== HOLLOW_CIRCLE_SHAPE) {
+    input.shape = HOLLOW_CIRCLE_SHAPE;
+    node.graph?.setDirtyCanvas(true, true);
   }
-  const indexByInput = new Map(ordered.map((input, index) => [input, index]));
-  node.inputs.splice(0, node.inputs.length, ...ordered);
+}
 
-  const graphLinks = node.graph?.links;
-  const entries = graphLinks instanceof Map
-    ? [...graphLinks.entries()]
-    : Object.entries(graphLinks ?? {});
-  for (const [key, link] of entries) {
-    if (String(link?.target_id) !== String(node.id)) continue;
-    const input = inputByLink.get(String(link.id ?? key))
-      ?? before[link.target_slot];
-    const targetSlot = indexByInput.get(input);
-    if (targetSlot !== undefined) link.target_slot = targetSlot;
+function syncSamplerLinkSlots(node, configuredInputs) {
+  const links = node.graph?.links;
+  if (!links || node.id == null || !configuredInputs?.size) return;
+
+  const entries = links instanceof Map ? links.values() : Object.values(links);
+  const linksById = new Map();
+  for (const link of entries) {
+    if (link?.id != null) linksById.set(String(link.id), link);
   }
+
+  const repairs = [...configuredInputs].flatMap(([linkId, inputName]) => {
+    const link = linksById.get(linkId);
+    const targetSlot = node.inputs?.findIndex((input) => input.name === inputName) ?? -1;
+    return link && String(link.target_id) === String(node.id) && targetSlot >= 0
+      ? [{ link, linkId, targetSlot }]
+      : [];
+  });
+  if (!repairs.length) return;
+
+  const repairedIds = new Set(repairs.map(({ linkId }) => linkId));
+  let changed = false;
+  for (const input of node.inputs ?? []) {
+    if (input.link != null && repairedIds.has(String(input.link))) {
+      input.link = null;
+      changed = true;
+    }
+  }
+  for (const { link, linkId, targetSlot } of repairs) {
+    const input = node.inputs[targetSlot];
+    if (link.target_slot !== targetSlot || input.link !== link.id) changed = true;
+    link.target_slot = targetSlot;
+    input.link = link.id ?? linkId;
+  }
+  if (changed) node.graph.setDirtyCanvas(true, true);
 }
 
 function installTransitionModeTooltip(node) {
@@ -386,12 +436,18 @@ function installTransitionModeTooltip(node) {
   updateTooltip();
 }
 
-// ComfyUI renders required inputs before optional inputs. previous_latent must
-// remain optional so generation one can leave it unwired, but visually it is
-// the start of every continuation lane.
 app.registerExtension({
   name: "elvax.dynamic-pipes-and-sampler-layout",
   beforeRegisterNodeDef(nodeType, nodeData) {
+    if (SAMPLER_NODE_TYPES.has(nodeData.name)) {
+      const firstRequired = Object.keys(nodeData.input?.required ?? {})[0];
+      moveOptionalInputBefore(nodeData, "previous_latent", firstRequired);
+      if (nodeData.name === "ElvaxH3ExtensionSampler") {
+        moveRequiredInputBefore(nodeData, "model", "conditioning");
+        moveRequiredInputBefore(nodeData, "transition_mode", "video_context_length");
+      }
+      return;
+    }
     if (nodeData.name !== PIPE_IN && nodeData.name !== PIPE_OUT) return;
     const originalCreated = nodeType.prototype.onNodeCreated;
     const originalConfigure = nodeType.prototype.onConfigure;
@@ -452,38 +508,26 @@ app.registerExtension({
       node.__elvaxSamplerConfigureHook = true;
       const originalConfigure = node.onConfigure;
       node.onConfigure = function (...args) {
+        const configuredInputs = new Map(
+          (args[0]?.inputs ?? [])
+            .filter((input) => input.link != null)
+            .map((input) => [String(input.link), input.name]),
+        );
         const result = originalConfigure?.apply(this, args);
-        const configuredSize = this.size?.slice();
         requestAnimationFrame(() => {
-          const before = this.inputs?.slice();
-          reorderSamplerInputs(this);
+          syncSamplerLinkSlots(this, configuredInputs);
+          setPreviousLatentSocketShape(this);
           installTransitionModeTooltip(this);
           installDurationControls(this);
-          if (before && before.some((input, index) => input !== this.inputs[index])) {
-            this.setSize(isPreviewSampler && configuredSize
-              ? configuredSize
-              : this.computeSize());
-            this.graph?.setDirtyCanvas(true, true);
-          }
         });
         return result;
       };
     }
 
-    // Optional sockets are added after nodeCreated in the current frontend.
-    // Defer one frame, but only for this exact custom-node instance.
     requestAnimationFrame(() => {
-      const originalSize = node.size?.slice();
-      const before = node.inputs?.slice();
-      reorderSamplerInputs(node);
+      setPreviousLatentSocketShape(node);
       installTransitionModeTooltip(node);
       installDurationControls(node);
-      if (before && before.some((input, index) => input !== node.inputs[index])) {
-        node.setSize(isPreviewSampler && originalSize
-          ? originalSize
-          : node.computeSize());
-        node.graph?.setDirtyCanvas(true, true);
-      }
     });
   },
 });
