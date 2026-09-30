@@ -97,6 +97,9 @@ Restart ComfyUI. The nodes appear under the `Elvax` category.
 
 This repository is licensed under GNU GPL v3 or later; see [LICENSE](LICENSE).
 
+Many nodes in this pack are based on or inspired by ComfyUI's native nodes.
+Credit to the Comfy Org team for ComfyUI and its native node implementations.
+
 LLM Turbo is adapted from the GPL-3.0-licensed
 [ComfyUI-LLM-text-processor](https://github.com/KingManiya/ComfyUI-LLM-text-processor)
 by KingManiya. It retains the GGUF llama.cpp invocation, image conversion, and
