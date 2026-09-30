@@ -2,7 +2,6 @@ import { app } from "/scripts/app.js";
 import { api } from "/scripts/api.js";
 
 const NODE_TYPE = "ElvaxH3SamplerPreview";
-const NODE_TYPE_V2 = "ElvaxH3SamplerPreviewV2";
 const PREVIEW_PROPERTY = "elvaxH3PreviewVideo";
 const MIN_PREVIEW_HEIGHT = 180;
 const PREVIEW_BOTTOM_SPACE = 16;
@@ -91,8 +90,7 @@ function installPreview(node) {
   video.preload = "metadata";
   video.loop = loopAllH3Previews;
   video.style.cssText = "display:none;width:100%;height:100%;max-height:480px;object-fit:contain;background:#111;";
-  const supportsLivePreview = [NODE_TYPE, NODE_TYPE_V2].includes(node.comfyClass) ||
-    [NODE_TYPE, NODE_TYPE_V2].includes(node.type);
+  const supportsLivePreview = node.comfyClass === NODE_TYPE || node.type === NODE_TYPE;
   const liveImage = supportsLivePreview ? document.createElement("img") : null;
   const liveVideo = supportsLivePreview ? document.createElement("video") : null;
   let liveVideoUrl = null;
@@ -317,8 +315,7 @@ function installPreview(node) {
 app.registerExtension({
   name: "elvax.h3-sampler-preview",
   nodeCreated(node) {
-    if ([NODE_TYPE, NODE_TYPE_V2].includes(node.comfyClass) ||
-        [NODE_TYPE, NODE_TYPE_V2].includes(node.type)) {
+    if (node.comfyClass === NODE_TYPE || node.type === NODE_TYPE) {
       installPreview(node);
     }
   },
@@ -329,8 +326,7 @@ api.addEventListener("executed", ({ detail }) => {
   if (!node && typeof detail?.node === "string") {
     node = app.graph.getNodeById(parseInt(detail.node, 10));
   }
-  if (!node || ![NODE_TYPE, NODE_TYPE_V2].includes(node.comfyClass) &&
-      ![NODE_TYPE, NODE_TYPE_V2].includes(node.type)) return;
+  if (!node || node.comfyClass !== NODE_TYPE && node.type !== NODE_TYPE) return;
   if (detail?.output?.elvax_h3_live_preview) {
     node.properties ??= {};
     delete node.properties[PREVIEW_PROPERTY];
@@ -345,7 +341,6 @@ api.addEventListener("executed", ({ detail }) => {
 
 api.addEventListener("kj_preview_override", ({ detail }) => {
   const node = findNodeByQualifiedId(app.graph, detail?.node_id);
-  if (![NODE_TYPE, NODE_TYPE_V2].includes(node?.comfyClass) &&
-      ![NODE_TYPE, NODE_TYPE_V2].includes(node?.type)) return;
+  if (node?.comfyClass !== NODE_TYPE && node?.type !== NODE_TYPE) return;
   node.__elvaxH3ShowLivePreview?.(detail);
 });

@@ -7,7 +7,6 @@ const PIPE_DEFAULT_WIDTH = 260;
 const SAMPLER_NODE_TYPES = new Set([
   "ElvaxH3ExtensionSampler",
   "ElvaxH3SamplerPreview",
-  "ElvaxH3SamplerPreviewV2",
 ]);
 const SAMPLER_INPUT_ORDERS = new Map();
 const HOLLOW_CIRCLE_SHAPE = 7;
@@ -485,9 +484,7 @@ app.registerExtension({
 
     const isPreviewSampler =
       node.type === "ElvaxH3SamplerPreview" ||
-      node.comfyClass === "ElvaxH3SamplerPreview" ||
-      node.type === "ElvaxH3SamplerPreviewV2" ||
-      node.comfyClass === "ElvaxH3SamplerPreviewV2";
+      node.comfyClass === "ElvaxH3SamplerPreview";
     const isSampler =
       node.type === "ElvaxH3ExtensionSampler" ||
       node.comfyClass === "ElvaxH3ExtensionSampler" ||

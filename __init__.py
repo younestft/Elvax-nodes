@@ -3,7 +3,6 @@ from .h3_reference_samplers import (
     H3ChainSettings,
     H3ReferenceInputs,
     H3SamplerPreview,
-    H3SamplerPreviewV2,
     H3StageSettings,
 )
 from .load_crop_image import LoadCropImage
@@ -18,7 +17,6 @@ NODE_CLASS_MAPPINGS = {
     "ElvaxH3ChainSettings": H3ChainSettings,
     "ElvaxH3StageSettings": H3StageSettings,
     "ElvaxH3SamplerPreview": H3SamplerPreview,
-    "ElvaxH3SamplerPreviewV2": H3SamplerPreviewV2,
     "ElvaxLoadCropImage": LoadCropImage,
     "ElvaxPromptEditPreview": PromptEditPreview,
     "ElvaxDynamicPipeIn": DynamicPipeIn,
@@ -32,7 +30,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ElvaxH3ChainSettings": "H3 Chain Settings",
     "ElvaxH3StageSettings": "H3 Stage Settings",
     "ElvaxH3SamplerPreview": "H3 Sampler Preview",
-    "ElvaxH3SamplerPreviewV2": "H3 Sampler Preview v2",
     "ElvaxLoadCropImage": "Load/Crop Image",
     "ElvaxPromptEditPreview": "Prompt Edit / Preview",
     "ElvaxDynamicPipeIn": "Dynamic Pipe In",
