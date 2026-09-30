@@ -34,9 +34,8 @@ Reroutes!
 
 ## Prompt Edit / Preview
 
-Edit prompt text directly or preview text from a connected source before passing
-it downstream. Switch between Edit and Preview modes to quickly refine or inspect
-generated text in your workflow.
+One node to preview text from a connected source or edit it directly before
+passing it downstream. Switch modes to inspect or refine prompts in place.
 
 ![Prompt Edit / Preview](assets/prompt-edit-preview.gif)
 
