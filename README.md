@@ -39,6 +39,13 @@ click, then refine it before passing it downstream.
 
 ![Prompt Edit / Preview](assets/prompt-edit-preview.gif)
 
+## Turbo Post Processing
+
+Upscale with Lanczos, interpolate with RIFE 4.9, and add film grain in one
+fast node, with optional low-VRAM processing.
+
+![Turbo Post Processing](assets/turbo-post-processing.jpg)
+
 ## H3 Staged Samplers
 
 Build a MiniMax H3 generation as a configurable stage-by-stage chain. Set shared
@@ -74,13 +81,6 @@ lightweight: the node returns the accumulated `chain_latent` and this stage's
 decode workflow.
 
 ![H3 Custom Extension Sampler](assets/custom-extension.jpg)
-
-## Turbo Post Processing
-
-Upscale with Lanczos, interpolate with RIFE 4.9, and add film grain in one
-fast node, with optional low-VRAM processing.
-
-![Turbo Post Processing](assets/turbo-post-processing.jpg)
 
 ## Installation
 
