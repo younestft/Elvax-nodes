@@ -38,14 +38,14 @@ class LLMTurbo(io.ComfyNode):
         images = io.Autogrow.TemplateNames(
             input=io.Image.Input(
                 "image",
-                tooltip="Needs a GGUF model with vision support like Qwen or Gemma."),
+                tooltip="(needs GGUF model with vision support like Qwen or Gemma)"),
             names=IMAGE_INPUT_NAMES,
             min=0,
         )
         audios = io.Autogrow.TemplateNames(
             input=io.Audio.Input(
                 "audio",
-                tooltip="Needs a GGUF model with audio input support like Gemma4 12b."),
+                tooltip="(needs GGUF model with audio input support like Gemma4 12b)"),
             names=AUDIO_INPUT_NAMES,
             min=0,
         )
@@ -90,14 +90,10 @@ class LLMTurbo(io.ComfyNode):
                 io.Combo.Input("reasoning", options=["auto", "on", "off"], default="off"),
                 io.Autogrow.Input(
                     "images", optional=True, template=images,
-                    tooltip=(
-                        "Needs a GGUF model with vision support like Qwen or Gemma. "
-                        "Up to nine image inputs. Each input may contain an image batch.")),
+                    tooltip="(needs GGUF model with vision support like Qwen or Gemma)"),
                 io.Autogrow.Input(
                     "audios", optional=True, template=audios,
-                    tooltip=(
-                        "Needs a GGUF model with audio input support like Gemma4 12b. "
-                        "Up to nine audio inputs. Audio batches are sent as separate files.")),
+                    tooltip="(needs GGUF model with audio input support like Gemma4 12b)"),
                 io.Combo.Input(
                     "flash_attention", options=list(FLASH_ATTENTION_OPTIONS),
                     default="auto",

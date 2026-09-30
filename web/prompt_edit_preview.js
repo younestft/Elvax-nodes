@@ -3,12 +3,22 @@ import { app } from "/scripts/app.js";
 const NODE_TYPE = "ElvaxPromptEditPreview";
 const MIN_BODY_HEIGHT = 80;
 
+function removeObsoleteWidgetSockets(node) {
+  for (let index = (node.inputs?.length ?? 0) - 1; index >= 0; index--) {
+    const input = node.inputs[index];
+    if ((input.name === "mode" || input.name === "text") && input.link == null) {
+      node.removeInput(index);
+    }
+  }
+}
+
 function installModeLayout(node) {
   if (node.__elvaxPromptEditPreviewInstalled) return;
   const modeWidget = node.widgets?.find((widget) => widget.name === "mode");
   const textWidget = node.widgets?.find((widget) => widget.name === "text");
   if (!modeWidget || !textWidget) return;
 
+  removeObsoleteWidgetSockets(node);
   node.__elvaxPromptEditPreviewInstalled = true;
   let previewText = null;
   const width = node.size?.[0] || 300;
@@ -108,17 +118,21 @@ function installModeLayout(node) {
 
   const update = () => {
     const source = node.inputs?.find((input) => input.name === "source");
-    const previewMode = !Boolean(modeWidget.value) && source?.link != null;
+    const previewMode = !Boolean(modeWidget.value);
+    const hasSource = source?.link != null;
+    const hasPreviewText = previewText != null && String(previewText).length > 0;
     if (editor.value !== String(textWidget.value ?? "")) {
       editor.value = String(textWidget.value ?? "");
     }
     editor.style.display = previewMode ? "none" : "block";
     previewContent.style.display = previewMode ? "block" : "none";
-    copyButton.style.display = previewMode ? "flex" : "none";
+    copyButton.style.display = previewMode && hasSource && hasPreviewText ? "flex" : "none";
     copyButton.style.opacity = "0";
     copyButton.style.pointerEvents = "none";
-    previewContent.textContent = previewText ?? "(Run the workflow to preview source text.)";
-    previewContent.style.color = previewText === null ? "#888" : "#ddd";
+    const visiblePreview = hasSource ? previewText : null;
+    previewContent.textContent = visiblePreview
+      ?? "(Connect source and run the workflow to preview source text.)";
+    previewContent.style.color = visiblePreview === null ? "#888" : "#ddd";
     node.graph?.setDirtyCanvas(true, true);
   };
 
@@ -155,6 +169,7 @@ function installModeLayout(node) {
   const originalConfigure = node.onConfigure;
   node.onConfigure = function (...args) {
     const result = originalConfigure?.apply(this, args);
+    removeObsoleteWidgetSockets(node);
     requestAnimationFrame(update);
     return result;
   };

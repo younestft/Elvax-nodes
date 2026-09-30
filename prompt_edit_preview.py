@@ -20,10 +20,11 @@ class PromptEditPreview(io.ComfyNode):
                 io.Boolean.Input(
                     "mode",
                     default=True,
+                    socketless=True,
                     label_on="Edit",
                     label_off="Preview",
                     tooltip="Edit the text, or preview and pass through the connected source."),
-                io.String.Input("text", multiline=True),
+                io.String.Input("text", multiline=True, socketless=True),
             ],
             outputs=[io.String.Output("prompt")],
             is_output_node=True,
