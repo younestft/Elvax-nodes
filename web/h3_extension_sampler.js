@@ -9,6 +9,7 @@ const SAMPLER_NODE_TYPES = new Set([
   "ElvaxH3SamplerPreview",
   "ElvaxH3SamplerPreviewV2",
 ]);
+const SAMPLER_INPUT_ORDERS = new Map();
 const HOLLOW_CIRCLE_SHAPE = 7;
 const TRANSITION_MODE_TOOLTIPS = {
   "motion context":
@@ -345,40 +346,22 @@ function setPreviousLatentSocketShape(node) {
   }
 }
 
-function syncSamplerLinkSlots(node, configuredInputs) {
-  const links = node.graph?.links;
-  if (!links || node.id == null || !configuredInputs?.size) return;
+function migrateSamplerLinkSlots(graphData) {
+  if (!Array.isArray(graphData?.nodes) || !Array.isArray(graphData?.links)) return;
 
-  const entries = links instanceof Map ? links.values() : Object.values(links);
-  const linksById = new Map();
-  for (const link of entries) {
-    if (link?.id != null) linksById.set(String(link.id), link);
-  }
+  const samplerNodes = new Map(
+    graphData.nodes
+      .filter((node) => SAMPLER_INPUT_ORDERS.has(node.type))
+      .map((node) => [String(node.id), node]),
+  );
+  for (const link of graphData.links) {
+    const node = samplerNodes.get(String(link[3]));
+    const inputName = node?.inputs?.[link[4]]?.name;
+    if (!inputName) continue;
 
-  const repairs = [...configuredInputs].flatMap(([linkId, inputName]) => {
-    const link = linksById.get(linkId);
-    const targetSlot = node.inputs?.findIndex((input) => input.name === inputName) ?? -1;
-    return link && String(link.target_id) === String(node.id) && targetSlot >= 0
-      ? [{ link, linkId, targetSlot }]
-      : [];
-  });
-  if (!repairs.length) return;
-
-  const repairedIds = new Set(repairs.map(({ linkId }) => linkId));
-  let changed = false;
-  for (const input of node.inputs ?? []) {
-    if (input.link != null && repairedIds.has(String(input.link))) {
-      input.link = null;
-      changed = true;
-    }
+    const targetSlot = SAMPLER_INPUT_ORDERS.get(node.type).indexOf(inputName);
+    if (targetSlot >= 0) link[4] = targetSlot;
   }
-  for (const { link, linkId, targetSlot } of repairs) {
-    const input = node.inputs[targetSlot];
-    if (link.target_slot !== targetSlot || input.link !== link.id) changed = true;
-    link.target_slot = targetSlot;
-    input.link = link.id ?? linkId;
-  }
-  if (changed) node.graph.setDirtyCanvas(true, true);
 }
 
 function installTransitionModeTooltip(node) {
@@ -446,6 +429,10 @@ app.registerExtension({
         moveRequiredInputBefore(nodeData, "model", "conditioning");
         moveRequiredInputBefore(nodeData, "transition_mode", "video_context_length");
       }
+      SAMPLER_INPUT_ORDERS.set(nodeData.name, [
+        ...(nodeData.input_order?.required ?? Object.keys(nodeData.input?.required ?? {})),
+        ...(nodeData.input_order?.optional ?? Object.keys(nodeData.input?.optional ?? {})),
+      ]);
       return;
     }
     if (nodeData.name !== PIPE_IN && nodeData.name !== PIPE_OUT) return;
@@ -467,6 +454,9 @@ app.registerExtension({
       });
       return result;
     };
+  },
+  beforeConfigureGraph(graphData) {
+    migrateSamplerLinkSlots(graphData);
   },
   nodeCreated(node) {
     if (isRerouteNode(node)) {
@@ -503,26 +493,6 @@ app.registerExtension({
       node.comfyClass === "ElvaxH3ExtensionSampler" ||
       isPreviewSampler;
     if (!isSampler) return;
-
-    if (!node.__elvaxSamplerConfigureHook) {
-      node.__elvaxSamplerConfigureHook = true;
-      const originalConfigure = node.onConfigure;
-      node.onConfigure = function (...args) {
-        const configuredInputs = new Map(
-          (args[0]?.inputs ?? [])
-            .filter((input) => input.link != null)
-            .map((input) => [String(input.link), input.name]),
-        );
-        const result = originalConfigure?.apply(this, args);
-        requestAnimationFrame(() => {
-          syncSamplerLinkSlots(this, configuredInputs);
-          setPreviousLatentSocketShape(this);
-          installTransitionModeTooltip(this);
-          installDurationControls(this);
-        });
-        return result;
-      };
-    }
 
     requestAnimationFrame(() => {
       setPreviousLatentSocketShape(node);
