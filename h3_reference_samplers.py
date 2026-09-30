@@ -33,6 +33,7 @@ from .h3_extension_sampler import (
 
 # Shared wire type and payload format with ethanfel/ComfyUI-H3-Prompt-IDE.
 H3_PROMPT_REFERENCES = io.Custom("H3_PROMPT_REFERENCES")
+H3_CHAIN_SETTINGS = io.Custom("ELVAX_H3_CHAIN_SETTINGS")
 H3_SAMPLER_SETTINGS = io.Custom("ELVAX_H3_SAMPLER_SETTINGS")
 
 PICTURE_NAMES = [f"<Picture {index}>" for index in range(1, 10)]
@@ -350,7 +351,7 @@ class H3ChainSettings(io.ComfyNode):
                         "through every sampling step, so 'max' can be several "
                         "times slower.")),
             ],
-            outputs=[H3_SAMPLER_SETTINGS.Output("chain_settings")],
+            outputs=[H3_CHAIN_SETTINGS.Output("chain_settings")],
         )
 
     @classmethod
@@ -381,7 +382,7 @@ class H3StageSettings(io.ComfyNode):
             description=(
                 "Configure each stage of a MiniMax H3 extension chain independently."),
             inputs=[
-                H3_SAMPLER_SETTINGS.Input("chain_settings"),
+                H3_CHAIN_SETTINGS.Input("chain_settings"),
                 io.Model.Input(
                     "model",
                     tooltip="You can connect this stage's custom Loras here"),
