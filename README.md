@@ -38,6 +38,8 @@ Edit prompt text directly or preview text from a connected source before passing
 it downstream. Switch between Edit and Preview modes to quickly refine or inspect
 generated text in your workflow.
 
+![Prompt Edit / Preview](assets/prompt-edit-preview.gif)
+
 ## H3 Staged Samplers
 
 Build a MiniMax H3 generation as a configurable stage-by-stage chain. Set shared
