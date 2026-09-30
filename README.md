@@ -63,6 +63,8 @@ live previews are available when a tiny VAE is selected.
 token labels for use in H3 Stage Settings. Audio slots 1–3 pair with their
 matching connected video slots; remaining audio slots are standalone.
 
+![H3 Stage Samplers](assets/stage-samplers.jpg)
+
 ## H3 Custom Extension Sampler
 
 Seamlessly extend a MiniMax H3 generation from one sampler stage to the next,
@@ -70,6 +72,8 @@ with controls to customize exactly how you want it built. Sampling stays
 lightweight: the node returns the accumulated `chain_latent` and this stage's
 `stage_latent` without decoding, so you can connect your preferred preview or
 decode workflow.
+
+![H3 Custom Extension Sampler](assets/custom-extension.jpg)
 
 ## Installation
 
