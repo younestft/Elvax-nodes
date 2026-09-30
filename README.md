@@ -84,6 +84,14 @@ decode workflow.
 
 ## Installation
 
+### ComfyUI Manager
+
+Once Elvax Nodes is listed in the Manager catalog, open **Manager → Custom Nodes
+Manager**, search for **Elvax Nodes**, and select **Install**. Restart ComfyUI
+after installation.
+
+### Manual installation
+
 Clone this repository into `ComfyUI/custom_nodes`:
 
 ```bash
