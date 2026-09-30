@@ -33,26 +33,38 @@ function installModeLayout(node) {
   editor.spellcheck = false;
   editor.style.cssText = "position:absolute;inset:0;width:100%;height:100%;box-sizing:border-box;resize:none;overflow:auto;padding:8px;border:1px solid #555;border-radius:4px;background:#202020;color:#ddd;font:12px monospace;line-height:1.45;outline:none;";
   const previewContent = document.createElement("pre");
-  previewContent.style.cssText = "position:absolute;inset:0;margin:0;padding:8px 38px 8px 8px;overflow:auto;box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #555;border-radius:4px;background:#202020;color:#ddd;font:12px/1.45 sans-serif;user-select:text;";
+  previewContent.style.cssText = "position:absolute;inset:0;margin:0;padding:8px 48px 8px 8px;overflow:auto;box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #555;border-radius:4px;background:#202020;color:#ddd;font:12px/1.45 sans-serif;user-select:text;";
+  const previewActions = document.createElement("div");
+  previewActions.style.cssText = "position:absolute;top:6px;right:16px;display:flex;flex-direction:column;gap:4px;opacity:0;pointer-events:none;transition:opacity 100ms;";
+  const actionStyle = "display:flex;align-items:center;justify-content:center;width:26px;height:26px;box-sizing:border-box;padding:3px;border:1px solid transparent;border-radius:4px;background:transparent;color:#bbb;cursor:pointer;transition:background-color 100ms,border-color 100ms,color 100ms;";
   const copyButton = document.createElement("button");
   copyButton.type = "button";
   copyButton.title = "Copy to clipboard";
   copyButton.setAttribute("aria-label", "Copy to clipboard");
-  copyButton.style.cssText = "position:absolute;top:6px;right:6px;display:flex;align-items:center;justify-content:center;width:28px;height:28px;padding:4px;border:1px solid transparent;border-radius:4px;background:transparent;color:#bbb;cursor:pointer;opacity:0;pointer-events:none;transition:opacity 100ms,background-color 100ms,border-color 100ms,color 100ms;";
-  const copyIcon = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg>';
-  const copiedIcon = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
+  copyButton.style.cssText = actionStyle;
+  const copyIcon = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg>';
+  const copiedIcon = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
+  const editIcon = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 16.5 11.8-11.8a2.1 2.1 0 0 1 3 3L7 19.5l-3.5 1L4 16.5Z"/><path d="m14.7 6.3 3 3"/><path d="m4 16.5 3 3"/></svg>';
+  const editButton = document.createElement("button");
+  editButton.type = "button";
+  editButton.title = "Edit this preview text";
+  editButton.setAttribute("aria-label", "Edit this preview text");
+  editButton.innerHTML = editIcon;
+  editButton.style.cssText = actionStyle;
   copyButton.innerHTML = copyIcon;
-  copyButton.addEventListener("pointerenter", () => {
-    copyButton.style.background = "#383838";
-    copyButton.style.borderColor = "#666";
-    copyButton.style.color = "#fff";
-  });
-  copyButton.addEventListener("pointerleave", () => {
-    copyButton.style.background = "transparent";
-    copyButton.style.borderColor = "transparent";
-    copyButton.style.color = "#bbb";
-  });
-  copyButton.addEventListener("pointerdown", (event) => event.stopPropagation());
+  for (const button of [copyButton, editButton]) {
+    button.addEventListener("pointerenter", () => {
+      button.style.background = "#383838";
+      button.style.borderColor = "#666";
+      button.style.color = "#fff";
+    });
+    button.addEventListener("pointerleave", () => {
+      button.style.background = "transparent";
+      button.style.borderColor = "transparent";
+      button.style.color = "#bbb";
+    });
+    button.addEventListener("pointerdown", (event) => event.stopPropagation());
+  }
   copyButton.addEventListener("click", async (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -79,25 +91,39 @@ function installModeLayout(node) {
       });
     }
   });
+  editButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (previewText == null || String(previewText).length === 0) return;
+
+    const value = String(previewText);
+    textWidget.value = value;
+    editor.value = value;
+    textWidget.callback?.(value, app.canvas, node);
+    modeWidget.value = true;
+    modeWidget.callback?.(true, app.canvas, node);
+    update();
+  });
   for (const eventName of ["pointerdown", "pointermove"]) {
     root.addEventListener(eventName, (event) => event.stopPropagation());
   }
   root.addEventListener("pointerenter", () => {
-    if (previewContent.style.display !== "none") {
-      copyButton.style.opacity = "1";
-      copyButton.style.pointerEvents = "auto";
+    if (previewActions.style.display !== "none") {
+      previewActions.style.opacity = "1";
+      previewActions.style.pointerEvents = "auto";
     }
   });
   root.addEventListener("pointerleave", () => {
-    copyButton.style.opacity = "0";
-    copyButton.style.pointerEvents = "none";
+    previewActions.style.opacity = "0";
+    previewActions.style.pointerEvents = "none";
   });
   editor.addEventListener("input", () => {
     textWidget.value = editor.value;
     textWidget.callback?.(textWidget.value, app.canvas, node);
     node.graph?.setDirtyCanvas(true, true);
   });
-  root.append(editor, previewContent, copyButton);
+  previewActions.append(copyButton, editButton);
+  root.append(editor, previewContent, previewActions);
 
   textWidget.hidden = true;
   textWidget.type = "hidden";
@@ -126,9 +152,9 @@ function installModeLayout(node) {
     }
     editor.style.display = previewMode ? "none" : "block";
     previewContent.style.display = previewMode ? "block" : "none";
-    copyButton.style.display = previewMode && hasSource && hasPreviewText ? "flex" : "none";
-    copyButton.style.opacity = "0";
-    copyButton.style.pointerEvents = "none";
+    previewActions.style.display = previewMode && hasSource && hasPreviewText ? "flex" : "none";
+    previewActions.style.opacity = "0";
+    previewActions.style.pointerEvents = "none";
     const visiblePreview = hasSource ? previewText : null;
     previewContent.textContent = visiblePreview
       ?? "(Connect source and run the workflow to preview source text.)";
