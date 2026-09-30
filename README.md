@@ -87,7 +87,7 @@ decode workflow.
 ### ComfyUI Manager
 
 Open **Manager → Custom Nodes Manager**, search for **Elvax Nodes**, and select
-**Install**. Restart ComfyUI after installation.
+**Install**. Restart ComfyUI.
 
 ### Manual installation
 
