@@ -9,6 +9,7 @@ class PromptEditPreview(io.ComfyNode):
             display_name="Prompt Edit / Preview",
             category="Elvax/text",
             search_aliases=[
+                "elvax",
                 "text preview",
                 "text edit",
                 "edit text",

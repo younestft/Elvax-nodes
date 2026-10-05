@@ -18,7 +18,7 @@ class LoadCropImage(nodes.LoadImage):
     CATEGORY = "Elvax/image"
     DESCRIPTION = ("Load and crop an image quickly in one node. Crop interactively, "
                    "output the current image with its matching mask, or restore the original.")
-    SEARCH_ALIASES = ["load crop image", "crop image loader", "upload and crop image"]
+    SEARCH_ALIASES = ["elvax", "load crop image", "crop image loader", "upload and crop image"]
 
     def load_crop_image(self, image, crop_x=0, crop_y=0, crop_width=0, crop_height=0):
         images, mask = super().load_image(image)

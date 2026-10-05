@@ -1495,6 +1495,7 @@ class H3ExtensionLatentTrim:
 class H3ExtensionSampler:
     """Sample one H3 stage and return the accumulated and stage-only latents."""
 
+    SEARCH_ALIASES = ["elvax"]
     CATEGORY = "sampling/minimax"
     RETURN_TYPES = ("LATENT", "LATENT")
     RETURN_NAMES = ("chain_latent", "stage_latent")

@@ -52,6 +52,7 @@ class LLMTurbo(io.ComfyNode):
             node_id="ElvaxLLMTurbo",
             display_name="LLM Turbo",
             category="Elvax",
+            search_aliases=["elvax"],
             description=(
                 "Run a local GGUF model through llama.cpp for fast inference in "
                 "ComfyUI. Use dynamically growing image and audio inputs, "

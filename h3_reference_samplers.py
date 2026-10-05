@@ -274,6 +274,7 @@ class H3ReferenceInputs(io.ComfyNode):
             display_name="H3 References",
             category="text/H3 Prompt IDE",
             search_aliases=[
+                "elvax",
                 "h3 ref input",
                 "h3 reference media",
                 "h3 reference images videos audio",
@@ -329,6 +330,7 @@ class H3ChainSettings(io.ComfyNode):
             node_id="ElvaxH3ChainSettings",
             display_name="H3 Chain Settings",
             category="sampling/minimax",
+            search_aliases=["elvax"],
             description=(
                 "Configure the shared settings for a MiniMax H3 extension chain."),
             inputs=[
@@ -379,6 +381,7 @@ class H3StageSettings(io.ComfyNode):
             node_id="ElvaxH3StageSettings",
             display_name="H3 Stage Settings",
             category="sampling/minimax",
+            search_aliases=["elvax"],
             description=(
                 "Configure each stage of a MiniMax H3 extension chain independently."),
             inputs=[
@@ -507,6 +510,7 @@ class H3SamplerPreview(io.ComfyNode):
             node_id="ElvaxH3SamplerPreview",
             display_name="H3 Sampler Preview",
             category="sampling/minimax",
+            search_aliases=["elvax"],
             description=(
                 "Sample a stage, optionally show a live tiny-VAE preview during "
                 "sampling or decode a full video preview, and pass the "

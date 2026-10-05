@@ -11,7 +11,7 @@ import torch
 
 
 class PostProcessing:
-    SEARCH_ALIASES = ["turbo", "turbo post processing", "upscale", "upscale video", "interpolate", "interpolate video", "grain", "film grain", "rife"]
+    SEARCH_ALIASES = ["elvax", "turbo", "turbo post processing", "upscale", "upscale video", "interpolate", "interpolate video", "grain", "film grain", "rife"]
     _UPSCALE_BATCH_SIZE = 8
 
     @classmethod

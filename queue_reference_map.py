@@ -1,4 +1,6 @@
 class QueueReferenceMap:
+    SEARCH_ALIASES = ["elvax"]
+
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {}}

@@ -7,6 +7,7 @@ PIPE_TYPE = "ELVAX_DYNAMIC_PIPE"
 class DynamicPipeIn:
     """Collect frontend-created value_N inputs into one ordered pipe."""
 
+    SEARCH_ALIASES = ["elvax"]
     CATEGORY = "Elvax/utility"
     RETURN_TYPES = (PIPE_TYPE,)
     RETURN_NAMES = ("pipe",)
@@ -36,6 +37,7 @@ class DynamicPipeIn:
 class DynamicPipeOut:
     """Restore dynamic-pipe values onto frontend-created output sockets."""
 
+    SEARCH_ALIASES = ["elvax"]
     CATEGORY = "Elvax/utility"
     RETURN_TYPES = ("*",) * MAX_PIPE_SLOTS
     RETURN_NAMES = tuple("value_%d" % index for index in range(1, MAX_PIPE_SLOTS + 1))
