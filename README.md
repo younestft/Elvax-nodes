@@ -20,7 +20,7 @@ runtime and llama.cpp generation speeds. Select models from `models/LLM` or
 `models/text_encoders`; image and audio inputs require a compatible model and
 projector (`mmproj`).
 
-![LLM Turbo](assets/llm-turbo.gif)
+![LLM Turbo](assets/llm-turbo-v2.gif)
 
 ## Load/Crop Image
 
