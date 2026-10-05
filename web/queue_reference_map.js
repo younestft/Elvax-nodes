@@ -3,7 +3,7 @@ import { api } from "/scripts/api.js";
 
 const NODE_TYPE = "ElvaxQueueReferenceMap";
 const POLL_INTERVAL_MS = 2500;
-const NODE_HEIGHT = 360;
+const MIN_WIDGET_HEIGHT = 180;
 const nodeViews = new Set();
 let pollTimer = null;
 let refreshTimer = null;
@@ -101,10 +101,9 @@ function addStyles() {
   const style = document.createElement("style");
   style.id = `${NODE_TYPE}-styles`;
   style.textContent = `
-    .elvax-queue-map { height: ${NODE_HEIGHT}px; box-sizing: border-box; overflow: auto; padding: 9px; color: var(--fg-color, #eee); background: var(--comfy-input-bg, #222); font: 12px/1.4 sans-serif; }
+    .elvax-queue-map { width: 100%; height: 100%; box-sizing: border-box; overflow: auto; padding: 9px; color: var(--fg-color, #eee); background: var(--comfy-input-bg, #222); font: 12px/1.4 sans-serif; }
     .elvax-queue-map__header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 1px 2px 6px; }
     .elvax-queue-map__title { margin: 0; font-size: 14px; font-weight: 600; }
-    .elvax-queue-map__total { display: flex; align-items: baseline; gap: 5px; color: var(--descrip-text, #aaa); }
     .elvax-queue-map__count, .elvax-queue-map__state { color: var(--descrip-text, #aaa); }
     .elvax-queue-map__item { padding: 8px 2px; border-top: 1px solid var(--border-color, #444); }
     .elvax-queue-map__item-header { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; }
@@ -161,9 +160,9 @@ function createItem(item, view, order) {
     const confirmed = app.extensionManager?.dialog?.confirm
       ? await app.extensionManager.dialog.confirm({
           title: "Cancel queue item?",
-          message: `Cancel #${item.number}?`,
+          message: `Cancel #${order}?`,
         })
-      : window.confirm(`Cancel #${item.number}?`);
+      : window.confirm(`Cancel #${order}?`);
     if (!confirmed) return;
 
     cancel.disabled = true;
@@ -176,7 +175,7 @@ function createItem(item, view, order) {
       app.extensionManager?.toast?.add({
         severity: "info",
         summary: "Cancel requested",
-        detail: `Queue #${item.number}`,
+        detail: `Queue #${order}`,
         life: 2500,
       });
       view.signature = null;
@@ -210,6 +209,7 @@ function renderView(view, items) {
   const signature = JSON.stringify(items.map((item) => [item.promptId, item.state]));
   if (signature === view.signature) return;
   view.signature = signature;
+  view.header.style.display = items.length ? "flex" : "none";
   const scrollTop = view.list.scrollTop;
   const fragment = document.createDocumentFragment();
   if (!items.length) {
@@ -277,12 +277,10 @@ function installNode(node) {
   const root = document.createElement("div");
   root.className = "elvax-queue-map";
   const header = el("div", "elvax-queue-map__header");
-  const title = el("h2", "elvax-queue-map__title", "Queue Reference Map");
-  const total = el("div", "elvax-queue-map__total");
-  total.append(el("span", "", "Generations in queue:"));
+  const title = el("h2", "elvax-queue-map__title", "Generations in queue:");
   const count = el("span", "elvax-queue-map__count", "0");
-  total.append(count);
-  header.append(title, total);
+  header.append(title, count);
+  header.style.display = "none";
   const list = document.createElement("div");
   const error = el("div", "elvax-queue-map__error", "");
   error.style.display = "none";
@@ -291,16 +289,20 @@ function installNode(node) {
   const widget = node.addDOMWidget("queue_reference_map", "div", root, {
     serialize: false,
     hideOnZoom: false,
-    getMinHeight: () => NODE_HEIGHT,
-    getHeight: () => NODE_HEIGHT,
+    getMinHeight: () => MIN_WIDGET_HEIGHT,
   });
-  widget.computeLayoutSize = () => ({ minHeight: NODE_HEIGHT, minWidth: 250 });
-  node.min_size = [Math.max(node.min_size?.[0] || 0, 280), Math.max(node.min_size?.[1] || 0, NODE_HEIGHT + 80)];
-  if ((node.size?.[1] || 0) < NODE_HEIGHT + 80) {
-    node.setSize([Math.max(node.size?.[0] || 280, 280), NODE_HEIGHT + 80]);
+  widget.computeLayoutSize = () => ({
+    minHeight: MIN_WIDGET_HEIGHT,
+    minWidth: 250,
+  });
+  const naturalSize = node.computeSize();
+  const nodeChromeHeight = Math.max(0, naturalSize[1] - MIN_WIDGET_HEIGHT);
+  node.min_size = [Math.max(node.min_size?.[0] || 0, 280), Math.max(node.min_size?.[1] || 0, MIN_WIDGET_HEIGHT + nodeChromeHeight)];
+  if ((node.size?.[1] || 0) < MIN_WIDGET_HEIGHT + nodeChromeHeight) {
+    node.setSize([Math.max(node.size?.[0] || 280, 280), MIN_WIDGET_HEIGHT + nodeChromeHeight]);
   }
 
-  const view = { root, list, count, error, signature: null };
+  const view = { root, header, list, count, error, signature: null };
   nodeViews.add(view);
   startPolling();
 
