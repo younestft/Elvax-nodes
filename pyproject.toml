@@ -1,6 +1,6 @@
 [project]
 name = "elvax-nodes"
-version = "1.0.0"
+version = "1.0.1"
 description = "A ComfyUI node pack for MiniMax H3, prompt editing, image cropping, dynamic pipes, local GGUF inference, and video post-processing."
 license = { file = "LICENSE" }
 dynamic = ["dependencies"]
