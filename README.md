@@ -95,7 +95,7 @@ decode workflow.
 Keep track of queued generations with their first reference image and prompt.
 See the current queue order and cancel an individual item directly from the node.
 
-## Installation
+# Installation
 
 ### ComfyUI Manager
 
@@ -119,7 +119,7 @@ python -m pip install -r ComfyUI/custom_nodes/Elvax-nodes/requirements.txt
 Restart ComfyUI. The nodes appear under the `Elvax` category.
 
 
-## License and credits
+# License and credits
 
 This repository is licensed under GNU GPL v3 or later; see [LICENSE](LICENSE).
 
