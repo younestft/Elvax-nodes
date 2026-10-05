@@ -1,7 +1,14 @@
 [project]
 name = "elvax-nodes"
-version = "1.0.1"
-description = "A ComfyUI node pack for MiniMax H3, prompt editing, image cropping, dynamic pipes, local GGUF inference, and video post-processing."
+version = "1.0.2"
+description = """Convenience nodes for ComfyUI!
+
+- LLM TURBO: Run local LLMs faster, directly in ComfyUI
+- Load and crop images faster in one node
+- Upscale, interpolate, and add film grain in one node
+- Tidy workflows with Dynamic Pipes, supporting Set/Get nodes and reroutes
+
+And more..."""
 license = { file = "LICENSE" }
 dynamic = ["dependencies"]
 
