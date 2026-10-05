@@ -54,11 +54,6 @@ fast node, with optional low-VRAM processing.
 
 ![Turbo Post Processing](assets/turbo-post-processing.jpg)
 
-## Queue Reference Map
-
-Keep track of queued generations with their first reference image and prompt.
-See the current queue order and cancel an individual item directly from the node.
-
 ## H3 Staged Samplers
 
 Build a MiniMax H3 generation as a configurable stage-by-stage chain. Set shared
@@ -143,3 +138,8 @@ Turbo Post Processing brings together ComfyUI's native Lanczos image scaling,
 RIFE 4.9 interpolation from [Fill-Nodes](https://github.com/filliptm/ComfyUI_Fill-Nodes)
 by filliptm, and Fast Film Grain from
 [VRGameDevGirl's nodes](https://github.com/vrgamegirl19/comfyui-vrgamedevgirl).
+
+## Queue Reference Map
+
+Keep track of queued generations with their first reference image and prompt.
+See the current queue order and cancel an individual item directly from the node.
