@@ -13,5 +13,5 @@ Repository = "https://github.com/younestft/Elvax-nodes"
 "Bug Tracker" = "https://github.com/younestft/Elvax-nodes/issues"
 
 [tool.comfy]
-PublisherId = "Elvaxorn"
+PublisherId = "elvaxorn"
 DisplayName = "Elvax Nodes"
