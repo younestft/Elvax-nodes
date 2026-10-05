@@ -38,6 +38,14 @@ function isRerouteNode(node) {
   return node?.type === "Reroute" || node?.comfyClass === "Reroute";
 }
 
+function isGetNode(node) {
+  return node?.type === "GetNode" || node?.comfyClass === "GetNode";
+}
+
+function isSetNode(node) {
+  return node?.type === "SetNode" || node?.comfyClass === "SetNode";
+}
+
 function connectedOutput(node, input) {
   const visited = new Set();
   let source = linkedOrigin(node, input);
@@ -73,7 +81,7 @@ function uniqueLabels(labels) {
 }
 
 function frontendGetName(node) {
-  if (node?.type !== "GetNode" && node?.comfyClass !== "GetNode") return null;
+  if (!isGetNode(node)) return null;
   const widget = node.widgets?.find((item) => item.name === "Constant")
     || node.widgets?.[0];
   const value = typeof widget?.value === "string" ? widget.value.trim() : "";
@@ -166,6 +174,36 @@ function installGetNodeLabelSync(node) {
   requestAnimationFrame(() => refreshDownstreamPipeLabels(node));
 }
 
+function refreshGetNodes(graph) {
+  for (const node of graph?._nodes || []) {
+    if (isGetNode(node)) refreshDownstreamPipeLabels(node);
+  }
+}
+
+function installSetNodeLabelSync(node) {
+  if (node.__elvaxSetLabelSyncInstalled) return;
+  node.__elvaxSetLabelSyncInstalled = true;
+  const refresh = () => requestAnimationFrame(() => refreshGetNodes(node.graph));
+
+  for (const widget of node.widgets || []) {
+    const originalCallback = widget.callback;
+    widget.callback = function (...args) {
+      const result = originalCallback?.apply(this, args);
+      refresh();
+      return result;
+    };
+  }
+
+  for (const method of ["onRename", "onConfigure", "onConnectionsChange", "onPropertyChanged"]) {
+    const original = node[method];
+    node[method] = function (...args) {
+      const result = original?.apply(this, args);
+      refresh();
+      return result;
+    };
+  }
+}
+
 function installDurationControls(node) {
   const duration = node.widgets?.find((item) => item.name === "duration_s");
   const useInitial = node.widgets?.find(
@@ -219,6 +257,7 @@ function syncPipeIn(node) {
     const { output } = connectedOutput(node, input);
     input.label = labels[index];
     input.type = output?.type || "*";
+    node.inputs.splice(index, 1, { ...input });
   });
   const last = node.inputs.at(-1);
   if ((!last || last.link != null) && node.inputs.length < MAX_PIPE_SLOTS) {
@@ -231,6 +270,23 @@ function syncPipeIn(node) {
     const target = link && node.graph.getNodeById(link.target_id);
     if (isNode(target, PIPE_OUT)) syncPipeOut(target);
   }
+}
+
+function refreshPipeInLabels(node) {
+  const labels = uniqueLabels(node.inputs.map((input) =>
+    connectedValueLabel(node, input, input.name),
+  ));
+  const needsSync = node.inputs.some((input, index) => {
+    const { output } = connectedOutput(node, input);
+    return input.label !== labels[index] || input.type !== (output?.type || "*");
+  });
+  if (!needsSync || node.__elvaxPipeInLabelSyncPending) return;
+
+  node.__elvaxPipeInLabelSyncPending = true;
+  requestAnimationFrame(() => {
+    node.__elvaxPipeInLabelSyncPending = false;
+    if (node.graph) syncPipeIn(node);
+  });
 }
 
 function pipeSource(node) {
@@ -259,6 +315,7 @@ function syncPipeOut(node) {
     const { output } = connectedOutput(source, input);
     node.outputs[index].label = labels[index];
     node.outputs[index].type = output?.type || "*";
+    node.outputs.splice(index, 1, { ...node.outputs[index] });
   });
   // Keep unused output slots harmless but invisible in meaning; do not remove
   // them automatically because deleting a connected slot would break a saved
@@ -280,6 +337,12 @@ function installDynamicPipe(node) {
       if (isNode(node, PIPE_IN)) syncPipeIn(node);
       if (isNode(node, PIPE_OUT)) syncPipeOut(node);
     });
+    return result;
+  };
+  const originalDrawForeground = node.onDrawForeground;
+  node.onDrawForeground = function (...args) {
+    const result = originalDrawForeground?.apply(this, args);
+    if (isNode(node, PIPE_IN)) refreshPipeInLabels(node);
     return result;
   };
   requestAnimationFrame(() => {
@@ -420,6 +483,15 @@ function installTransitionModeTooltip(node) {
 
 app.registerExtension({
   name: "elvax.dynamic-pipes-and-sampler-layout",
+  setup(app) {
+    // Nodes 2.0 edits Set/Get node state through Vue, bypassing LiteGraph
+    // widget callbacks. Reconcile pipe labels when their upstream names change.
+    window.setInterval(() => {
+      for (const node of app.graph?._nodes || []) {
+        if (isNode(node, PIPE_IN)) refreshPipeInLabels(node);
+      }
+    }, 150);
+  },
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (SAMPLER_NODE_TYPES.has(nodeData.name)) {
       const firstRequired = Object.keys(nodeData.input?.required ?? {})[0];
@@ -465,6 +537,11 @@ app.registerExtension({
 
     if (node.type === "GetNode" || node.comfyClass === "GetNode") {
       installGetNodeLabelSync(node);
+      return;
+    }
+
+    if (isSetNode(node)) {
+      installSetNodeLabelSync(node);
       return;
     }
 
