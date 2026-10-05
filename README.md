@@ -90,6 +90,11 @@ decode workflow.
 
 ![H3 Custom Extension Sampler](assets/custom-extension.jpg)
 
+## Queue Reference Map
+
+Keep track of queued generations with their first reference image and prompt.
+See the current queue order and cancel an individual item directly from the node.
+
 ## Installation
 
 ### ComfyUI Manager
@@ -138,8 +143,3 @@ Turbo Post Processing brings together ComfyUI's native Lanczos image scaling,
 RIFE 4.9 interpolation from [Fill-Nodes](https://github.com/filliptm/ComfyUI_Fill-Nodes)
 by filliptm, and Fast Film Grain from
 [VRGameDevGirl's nodes](https://github.com/vrgamegirl19/comfyui-vrgamedevgirl).
-
-## Queue Reference Map
-
-Keep track of queued generations with their first reference image and prompt.
-See the current queue order and cancel an individual item directly from the node.
