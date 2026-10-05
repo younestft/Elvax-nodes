@@ -46,6 +46,11 @@ fast node, with optional low-VRAM processing.
 
 ![Turbo Post Processing](assets/turbo-post-processing.jpg)
 
+## Queue Reference Map
+
+Keep track of queued generations with their first reference image and prompt.
+See the current queue order and cancel an individual item directly from the node.
+
 ## H3 Staged Samplers
 
 Build a MiniMax H3 generation as a configurable stage-by-stage chain. Set shared

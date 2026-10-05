@@ -10,6 +10,7 @@ from .prompt_edit_preview import PromptEditPreview
 from .dynamic_pipe import DynamicPipeIn, DynamicPipeOut
 from .llm_turbo.nodes import LLMTurbo
 from .post_processing import PostProcessing
+from .queue_reference_map import QueueReferenceMap
 
 
 NODE_CLASS_MAPPINGS = {
@@ -24,6 +25,7 @@ NODE_CLASS_MAPPINGS = {
     "ElvaxDynamicPipeOut": DynamicPipeOut,
     "ElvaxLLMTurbo": LLMTurbo,
     "ElvaxPostProcessing": PostProcessing,
+    "ElvaxQueueReferenceMap": QueueReferenceMap,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -38,6 +40,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ElvaxDynamicPipeOut": "Dynamic Pipe Out",
     "ElvaxLLMTurbo": "LLM Turbo",
     "ElvaxPostProcessing": "Turbo Post Processing",
+    "ElvaxQueueReferenceMap": "Queue Reference Map",
 }
 
 WEB_DIRECTORY = "./web"
