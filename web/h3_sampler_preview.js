@@ -149,7 +149,12 @@ function installPreview(node) {
   ]), "Sync preview", () => {
     for (const preview of document.querySelectorAll(
       ".vhs_preview video, .elvax-h3-preview-video",
-    )) preview.currentTime = 0;
+    )) {
+      try {
+        preview.currentTime = 0;
+      } catch {}
+      preview.play().catch(() => {});
+    }
   });
   root.addEventListener("pointerenter", updateToolbar);
   root.addEventListener("pointerleave", updateToolbar);
