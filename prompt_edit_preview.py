@@ -8,6 +8,15 @@ class PromptEditPreview(io.ComfyNode):
             node_id="ElvaxPromptEditPreview",
             display_name="Prompt Edit / Preview",
             category="Elvax/text",
+            search_aliases=[
+                "text preview",
+                "text edit",
+                "edit text",
+                "preview text",
+                "text editor",
+                "prompt edit",
+                "prompt preview",
+            ],
             description=(
                 "Preview and edit text in one node. Edit the preview text "
                 "with one click, then refine it before passing it downstream."),
