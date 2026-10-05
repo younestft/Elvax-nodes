@@ -124,7 +124,7 @@ This repository is licensed under GNU GPL v3 or later; see [LICENSE](LICENSE).
 
 Many nodes in this pack are based on or inspired by ComfyUI's native nodes.
 Credit to the Comfy Org team for ComfyUI and its native node implementations.
-The H3 tiny-VAE preview is credited to Kijai and KJNodes.
+The H3 tiny-VAE preview is credited to Kijai and [KJNodes](https://github.com/kijai/ComfyUI-KJNodes).
 
 LLM Turbo is adapted from the GPL-3.0-licensed
 [ComfyUI-LLM-text-processor](https://github.com/KingManiya/ComfyUI-LLM-text-processor)
