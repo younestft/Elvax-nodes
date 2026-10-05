@@ -69,7 +69,7 @@ function installCropUI(node) {
 
   const root = document.createElement("div");
   root.dataset.elvaxLoadCropPreview = "true";
-  root.style.cssText = "display:flex;flex-direction:column;gap:6px;width:100%;box-sizing:border-box;pointer-events:none;";
+  root.style.cssText = "display:flex;flex-direction:column;gap:6px;width:100%;box-sizing:border-box;background:transparent;pointer-events:none;";
   const buttons = document.createElement("div");
   buttons.style.cssText = "display:flex;gap:6px;width:calc(100% - 12px);margin:-8px 6px 0;pointer-events:auto;";
 
@@ -103,13 +103,13 @@ function installCropUI(node) {
   }
 
   const restoreButton = makeButton("Restore");
+  restoreButton.title = "Restore the original image and remove all cropping.";
   const cropButton = makeButton("Crop");
+  cropButton.title = "Crop the selected area. Shortcut: press Enter while hovering over the image.";
   buttons.append(restoreButton, cropButton);
 
-  const nodeBackground = node.bgcolor || window.LiteGraph.NODE_DEFAULT_BGCOLOR;
   const preview = document.createElement("div");
-  preview.style.cssText = "display:flex;flex:1 1 auto;flex-direction:column;justify-content:center;align-items:center;min-height:0;margin:0 -10px -10px;overflow:hidden;border-radius:0 0 10px 10px;pointer-events:none;";
-  preview.style.backgroundColor = nodeBackground;
+  preview.style.cssText = "display:flex;flex:1 1 auto;flex-direction:column;justify-content:center;align-items:center;min-height:0;margin:0 -10px -10px;overflow:hidden;border-radius:0 0 10px 10px;background:transparent;pointer-events:none;";
   const imageWrap = document.createElement("div");
   imageWrap.style.cssText = "position:relative;flex:0 0 auto;pointer-events:none;";
   const canvas = document.createElement("canvas");
@@ -134,11 +134,20 @@ function installCropUI(node) {
     getMinHeight: () => MIN_WIDGET_HEIGHT,
     getMaxHeight: () => editorHeight,
     getHeight: () => editorHeight,
+    onDraw: () => {
+      if (updateCanvasResolution()) draw();
+    },
   });
   if (!document.getElementById("elvax-load-crop-widget-style")) {
     const style = document.createElement("style");
     style.id = "elvax-load-crop-widget-style";
-    style.textContent = ".dom-widget:has(>[data-elvax-load-crop-preview]){pointer-events:none!important}";
+    style.textContent = `
+      .dom-widget:has(>[data-elvax-load-crop-preview]){pointer-events:none!important}
+      .lg-node:has([data-elvax-load-crop-preview]) [data-testid^="node-body-"] > div:has(> .lg-node-content){display:none!important}
+      .lg-node [data-elvax-load-crop-preview]{contain:size;min-height:${MIN_WIDGET_HEIGHT}px}
+      .lg-node [data-elvax-load-crop-preview] > :first-child{margin:0 6px!important}
+      .lg-node [data-elvax-load-crop-preview] > :last-child{margin:0!important}
+    `;
     document.head.append(style);
   }
 
@@ -195,8 +204,10 @@ function installCropUI(node) {
     const widgetTop = Number.isFinite(domWidget.last_y) && domWidget.last_y > 0
       ? domWidget.last_y
       : Math.max(0, nodeHeight - editorHeight);
-    const maxHeight = Math.max(1, nodeHeight - widgetTop - NODE_FOOTER_SPACE
-      - PREVIEW_LAYOUT_SPACE - RESOLUTION_HEIGHT);
+    const maxHeight = root.closest(".lg-node")
+      ? Math.max(1, preview.clientHeight - RESOLUTION_HEIGHT)
+      : Math.max(1, nodeHeight - widgetTop - NODE_FOOTER_SPACE
+        - PREVIEW_LAYOUT_SPACE - RESOLUTION_HEIGHT);
     const view = viewRect || { x: 0, y: 0, width: imageWidth || 16, height: imageHeight || 9 };
     const scale = Math.min(maxWidth / view.width, maxHeight / view.height);
     const width = Math.max(1, Math.round(view.width * scale));
@@ -227,11 +238,6 @@ function installCropUI(node) {
   function resizeCanvas() {
     const size = previewDimensions();
     editorHeight = Math.max(MIN_WIDGET_HEIGHT, size.maxHeight + PREVIEW_LAYOUT_SPACE + RESOLUTION_HEIGHT);
-    const view = viewRect || { width: size.width, height: size.height };
-    const pixelWidth = Math.max(1, Math.round(view.width));
-    const pixelHeight = Math.max(1, Math.round(view.height));
-    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
-    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
     imageWrap.style.width = `${size.width}px`;
     imageWrap.style.height = `${size.height}px`;
     canvas.style.width = `${size.width}px`;
@@ -239,15 +245,26 @@ function installCropUI(node) {
     draw();
   }
 
+  function updateCanvasResolution() {
+    const bounds = canvas.getBoundingClientRect();
+    const ratio = window.devicePixelRatio || 1;
+    const view = viewRect || { width: imageWidth, height: imageHeight };
+    const width = Math.max(1, Math.round(view.width), Math.round(bounds.width * ratio));
+    const height = Math.max(1, Math.round(view.height), Math.round(bounds.height * ratio));
+    if (canvas.width === width && canvas.height === height) return false;
+    canvas.width = width;
+    canvas.height = height;
+    return true;
+  }
+
   function draw() {
+    updateCanvasResolution();
     const width = canvas.width;
     const height = canvas.height;
     if (!width || !height) return;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
     ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = nodeBackground;
-    ctx.fillRect(0, 0, width, height);
     if (source && imageWidth && imageHeight) {
       const view = viewRect || { x: 0, y: 0, width: imageWidth, height: imageHeight };
       ctx.drawImage(source, view.x, view.y, view.width, view.height, 0, 0, width, height);
@@ -277,14 +294,15 @@ function installCropUI(node) {
       ctx.fillRect(right, top, width - right, boxHeight);
       ctx.fillRect(0, bottom, width, height - bottom);
       const canvasBounds = canvas.getBoundingClientRect();
-      const handle = Math.max(4, HANDLE_SIZE * width / Math.max(1, canvasBounds.width));
+      const screenScale = width / Math.max(1, canvasBounds.width);
+      const handle = HANDLE_SIZE * screenScale;
       const half = handle / 2;
       const topHandleY = top < half && boxHeight >= handle ? half : top;
       ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 3 * screenScale;
       ctx.strokeRect(left + 0.5, top + 0.5, Math.max(0, boxWidth - 1), Math.max(0, boxHeight - 1));
       ctx.strokeStyle = "#f4f4f4";
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 3 * screenScale;
       ctx.strokeRect(left + 0.5, top + 0.5, Math.max(0, boxWidth - 1), Math.max(0, boxHeight - 1));
       const points = [
         [left, topHandleY], [left + boxWidth / 2, topHandleY], [right, topHandleY],
@@ -475,6 +493,14 @@ function installCropUI(node) {
   };
 
   function onKeyDown(event) {
+    if (event.key === "Enter" && interaction.matches(":hover") && !cropButton.disabled && !drag
+      && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+      if (event.target instanceof HTMLElement && (event.target.isContentEditable || /^(INPUT|TEXTAREA)$/.test(event.target.tagName))) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      cropButton.click();
+      return;
+    }
     if (event.key === "Escape" && (selection || drag) && (document.activeElement === interaction || app.canvas?.selected_nodes?.[node.id])) {
       event.preventDefault();
       event.stopImmediatePropagation();
