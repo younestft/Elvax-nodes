@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import os
 import re
-import shlex
 import subprocess
 import tempfile
 import time
@@ -42,32 +41,6 @@ KV_CACHE_TYPES = {
     "Q4_0 - Low VRAM": "q4_0",
     "IQ4_NL - Low VRAM / higher quality": "iq4_nl",
 }
-
-_UI_CONTROLLED_FLAGS = {
-    "--flash-attn": "optional-value",
-    "-fa": "optional-value",
-    "--cache-type-k": "value",
-    "-ctk": "value",
-    "--cache-type-v": "value",
-    "-ctv": "value",
-}
-_MTP_CONTROLLED_FLAGS = {
-    "--model-draft": "value",
-    "--spec-draft-model": "value",
-    "-md": "value",
-    "--spec-draft-hf": "value",
-    "-hfd": "value",
-    "-hfrd": "value",
-    "--hf-repo-draft": "value",
-    "--spec-type": "value",
-    "--spec-draft-type-k": "value",
-    "--cache-type-k-draft": "value",
-    "-ctkd": "value",
-    "--spec-draft-type-v": "value",
-    "--cache-type-v-draft": "value",
-    "-ctvd": "value",
-}
-
 
 def _tensor_to_temp_png(tensor) -> Path:
     import numpy as np
@@ -141,45 +114,6 @@ def _write_prompt_file(prompt: str) -> Path:
     return _write_temp_text_file("llm-text-processor-prompt-", prompt.strip() + PROMPT_PADDING)
 
 
-def split_extra_args(extra_args: str) -> list[str]:
-    if not extra_args or not extra_args.strip():
-        return []
-    parts = shlex.split(extra_args, posix=(os.name != "nt"))
-    return [part.strip("\"'") for part in parts]
-
-
-def filter_ui_controlled_args(args: list[str] | None, mtp_model_selected: bool) -> list[str]:
-    if not args:
-        return []
-
-    filtered = []
-    index = 0
-    while index < len(args):
-        arg = args[index]
-        flag, separator, _ = arg.partition("=")
-        flag = flag.lower().replace("_", "-")
-        mode = _UI_CONTROLLED_FLAGS.get(flag)
-        if mode is None and mtp_model_selected:
-            mode = _MTP_CONTROLLED_FLAGS.get(flag)
-
-        if mode is None:
-            filtered.append(arg)
-            index += 1
-            continue
-
-        index += 1
-        if separator or index >= len(args):
-            continue
-
-        next_arg = args[index]
-        if mode == "value" and not next_arg.startswith("-"):
-            index += 1
-        elif mode == "optional-value" and next_arg.lower() in FLASH_ATTENTION_OPTIONS:
-            index += 1
-
-    return filtered
-
-
 def normalize_llama_seed(seed: int) -> int:
     seed = int(seed)
     if seed == LLAMA_RANDOM_SEED:
@@ -199,12 +133,13 @@ def build_command(
     max_tokens: int,
     temperature: float,
     top_p: float,
+    min_p: float,
     top_k: int,
     repeat_penalty: float,
+    presence_penalty: float,
     context_window_size: int,
     seed: int,
     reasoning: str,
-    extra_args: list[str] | None = None,
     mtp_model_path: Path | None = None,
     flash_attention: str = "auto",
     kv_cache: str = KV_CACHE_OPTIONS[0],
@@ -215,7 +150,6 @@ def build_command(
         raise ValueError(f"Unsupported KV cache choice: {kv_cache}")
 
     kv_cache_type = KV_CACHE_TYPES[kv_cache]
-    extra_args = filter_ui_controlled_args(extra_args, mtp_model_path is not None)
     cleanup_paths = []
     cli_paths = ensure_llama_cli_paths()
     image_paths = []
@@ -242,8 +176,10 @@ def build_command(
         "-n", str(max_tokens),
         "--temp", str(temperature),
         "--top-p", str(top_p),
+        "--min-p", str(min_p),
         "--top-k", str(top_k),
         "--repeat-penalty", str(repeat_penalty),
+        "--presence-penalty", str(presence_penalty),
         "-c", str(context_window_size),
         "--seed", str(normalize_llama_seed(seed)),
         "--single-turn",
@@ -261,8 +197,6 @@ def build_command(
         command.extend(["--image", ",".join(str(path) for path in image_paths)])
     if audio_paths:
         command.extend(["--audio", ",".join(str(path) for path in audio_paths)])
-    if extra_args:
-        command.extend(extra_args)
     command.extend(["--flash-attn", flash_attention])
     command.extend(["--cache-type-k", kv_cache_type, "--cache-type-v", kv_cache_type])
     if mtp_model_path is not None:
