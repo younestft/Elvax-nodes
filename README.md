@@ -128,20 +128,17 @@ The H3 tiny-VAE preview is credited to Kijai and KJNodes.
 
 LLM Turbo is adapted from the GPL-3.0-licensed
 [ComfyUI-LLM-text-processor](https://github.com/KingManiya/ComfyUI-LLM-text-processor)
-by KingManiya. It retains the GGUF llama.cpp invocation, image conversion, and
-response parsing, with Elvax-specific inputs, model discovery, and timing output.
+by KingManiya.
 
 The H3 Extension Sampler is a modified derivative of
 [ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context)
-by NikoDemon80. It retains GPL-licensed H3 layout checks, latent-tail slicing,
-and timeline-aligned audio-continuation logic.
+by NikoDemon80.
 
 The bundled H3 References node is adapted from the GPL-3.0-licensed
 [ComfyUI-H3-Prompt-IDE](https://github.com/ethanfel/ComfyUI-H3-Prompt-IDE) by
-Ethan Fel. It preserves the input socket labels and reference bundle contract.
+Ethan Fel.
 
 Turbo Post Processing brings together ComfyUI's native Lanczos image scaling,
 RIFE 4.9 interpolation from [Fill-Nodes](https://github.com/filliptm/ComfyUI_Fill-Nodes)
 by filliptm, and Fast Film Grain from
 [VRGameDevGirl's nodes](https://github.com/vrgamegirl19/comfyui-vrgamedevgirl).
-Credit to the Comfy Org team for the native ComfyUI scaling implementation.
