@@ -6,6 +6,7 @@ Convenience nodes for ComfyUI!
 - Load and crop images faster in one node
 - Upscale, interpolate, and add film grain in one node
 - Tidy workflows with Dynamic Pipes, supporting Set/Get nodes and reroutes
+- Extend Minimax H3 Videos
 
 And more...
 
