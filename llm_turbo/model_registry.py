@@ -10,7 +10,7 @@ import folder_paths
 
 NO_MODELS_FOUND = "No GGUF models found"
 NO_MMPROJ = "none"
-NO_MTP_MODEL = "None"
+NO_MTP_MODEL = "none"
 
 
 def _model_roots() -> list[tuple[str, Path]]:
@@ -91,7 +91,7 @@ def full_mmproj_path(name: str) -> Path | None:
 
 
 def full_mtp_model_path(name: str | None) -> Path | None:
-    if name is None or name == NO_MTP_MODEL:
+    if name is None or name.casefold() == NO_MTP_MODEL:
         return None
     path = gguf_paths().get(name)
     if path is None or not any(marker in path.name.lower() for marker in ("mtp", "assistant")):
