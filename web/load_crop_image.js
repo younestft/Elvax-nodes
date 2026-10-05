@@ -69,7 +69,7 @@ function installCropUI(node) {
 
   const root = document.createElement("div");
   root.dataset.elvaxLoadCropPreview = "true";
-  root.style.cssText = "display:flex;flex-direction:column;gap:6px;width:100%;box-sizing:border-box;background:transparent;pointer-events:none;";
+  root.style.cssText = "display:flex;flex-direction:column;gap:6px;width:100%;height:100%;min-width:0;box-sizing:border-box;background:transparent;pointer-events:none;";
   const buttons = document.createElement("div");
   buttons.style.cssText = "display:flex;gap:6px;width:calc(100% - 12px);margin:-8px 6px 0;pointer-events:auto;";
 
@@ -132,7 +132,7 @@ function installCropUI(node) {
     serialize: false,
     hideOnZoom: false,
     getMinHeight: () => MIN_WIDGET_HEIGHT,
-    getMaxHeight: () => editorHeight,
+    getMaxHeight: () => root.closest(".lg-node") ? undefined : editorHeight,
     getHeight: () => editorHeight,
     onDraw: () => {
       if (updateCanvasResolution()) draw();
@@ -144,9 +144,9 @@ function installCropUI(node) {
     style.textContent = `
       .dom-widget:has(>[data-elvax-load-crop-preview]){pointer-events:none!important}
       .lg-node:has([data-elvax-load-crop-preview]) [data-testid^="node-body-"] > div:has(> .lg-node-content){display:none!important}
-      .lg-node [data-elvax-load-crop-preview]{contain:size;min-height:${MIN_WIDGET_HEIGHT}px}
+      .lg-node [data-elvax-load-crop-preview]{contain:size;width:100%;height:100%;min-height:${MIN_WIDGET_HEIGHT}px;box-sizing:border-box}
       .lg-node [data-elvax-load-crop-preview] > :first-child{margin:0 6px!important}
-      .lg-node [data-elvax-load-crop-preview] > :last-child{margin:0!important}
+      .lg-node [data-elvax-load-crop-preview] > :last-child{width:100%;margin:0!important}
     `;
     document.head.append(style);
   }
@@ -159,6 +159,7 @@ function installCropUI(node) {
   let appliedCrop = null;
   let drag = null;
   let initialSizeApplied = false;
+  const persistingImages = new Set();
 
   function readAppliedCrop() {
     const crop = {
@@ -460,6 +461,50 @@ function installCropUI(node) {
     replaceWithCrop();
   }
 
+  async function persistPastedImage(media, value) {
+    const path = String(value || "").replace(/\\/g, "/").replace(/\s+\[input\]$/i, "");
+    if (!/^pasted\//i.test(path) || /^elvax-load-crop-/i.test(path)) return;
+    if (persistingImages.has(path)) return;
+    persistingImages.add(path);
+
+    try {
+      const originalName = path.split("/").at(-1) || "image.png";
+      let blob;
+      let uploadName = originalName;
+      const previewUrl = new URL(viewUrl(value), window.location.href);
+      const response = await api.fetchApi(`${previewUrl.pathname}${previewUrl.search}`);
+      if (response.ok) {
+        blob = await response.blob();
+      } else {
+        const canvas = document.createElement("canvas");
+        canvas.width = media.naturalWidth;
+        canvas.height = media.naturalHeight;
+        canvas.getContext("2d").drawImage(media, 0, 0);
+        blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+        uploadName = `${originalName.replace(/\.[^.]+$/, "")}.png`;
+      }
+      if (!blob || imageWidget.value !== value) return;
+
+      const form = new FormData();
+      form.append("image", blob, `elvax-load-crop-${Date.now()}-${uploadName}`);
+      form.append("type", "input");
+      form.append("subfolder", "");
+      const upload = await api.fetchApi("/upload/image", { method: "POST", body: form });
+      if (!upload.ok) throw new Error(`upload failed (${upload.status})`);
+
+      const result = await upload.json();
+      if (imageWidget.value !== value) return;
+      imageWidget.value = result.name;
+      originalImageCallback?.call(imageWidget, result.name, app.canvas, node);
+      loadPreview(false);
+      node.graph?.setDirtyCanvas(true, true);
+    } catch (error) {
+      console.warn("Load/Crop Image: could not retain the pasted image", error);
+    } finally {
+      persistingImages.delete(path);
+    }
+  }
+
   function saveImage() {
     const image = currentImageCanvas();
     if (!image) return;
@@ -659,6 +704,7 @@ function installCropUI(node) {
           initialSizeApplied = true;
           scheduleMinimumNodeSize(true);
         }
+        persistPastedImage(media, imageWidget.value);
       };
     }
     media.onerror = () => {
@@ -670,7 +716,11 @@ function installCropUI(node) {
     media.src = url;
   }
 
-  domWidget.computeLayoutSize = () => ({ minHeight: MIN_WIDGET_HEIGHT, maxHeight: editorHeight, minWidth: 0 });
+  domWidget.computeLayoutSize = () => ({
+    minHeight: MIN_WIDGET_HEIGHT,
+    maxHeight: root.closest(".lg-node") ? undefined : editorHeight,
+    minWidth: 0,
+  });
   const nativeMinimumWidth = new window.LiteGraph.registered_node_types.LoadImage().computeSize()[0];
   if (node.__elvaxWasConfigured) initialSizeApplied = true;
   scheduleMinimumNodeSize();
