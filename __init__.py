@@ -11,6 +11,7 @@ from .dynamic_pipe import DynamicPipeIn, DynamicPipeOut
 from .llm_turbo.nodes import LLMTurbo
 from .post_processing import PostProcessing
 from .queue_reference_map import QueueReferenceMap
+from .seed_nodes import ChainSeed, StageSeed
 
 
 NODE_CLASS_MAPPINGS = {
@@ -26,6 +27,8 @@ NODE_CLASS_MAPPINGS = {
     "ElvaxLLMTurbo": LLMTurbo,
     "ElvaxPostProcessing": PostProcessing,
     "ElvaxQueueReferenceMap": QueueReferenceMap,
+    "ElvaxStageSeed": StageSeed,
+    "ElvaxChainSeed": ChainSeed,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -41,6 +44,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ElvaxLLMTurbo": "LLM Turbo",
     "ElvaxPostProcessing": "Turbo Post Processing",
     "ElvaxQueueReferenceMap": "Queue Reference Map",
+    "ElvaxStageSeed": "Stage Seed",
+    "ElvaxChainSeed": "Chain Seed",
 }
 
 WEB_DIRECTORY = "./web"
