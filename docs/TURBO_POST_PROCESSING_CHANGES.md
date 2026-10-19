@@ -63,7 +63,7 @@ Progress now advances once for each newly upscaled source frame.
 | `post_processing.py` | Processing order, parallel Lanczos, boundary reuse, progress accounting, worker/cache cleanup. |
 | `tests/test_post_processing.py` | Expanded batching tests and added pixel equality, concurrency, cache storage, and worker failure checks. |
 | `web/post_processing.js` | Remove the leftover socket for the hidden upscale-method control. |
-| `TURBO_POST_PROCESSING_CHANGES.md` | This report. |
+| `docs/TURBO_POST_PROCESSING_CHANGES.md` | This report. |
 
 Existing edits were preserved: `dual_pass_rife` was already changed to default to false in `post_processing.py`, and `web/post_processing.js` already contained a widget/input change. Those edits were not introduced by this work.
 
