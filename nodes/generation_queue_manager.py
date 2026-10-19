@@ -2,13 +2,27 @@ from aiohttp import web
 from server import PromptServer
 
 
+@PromptServer.instance.routes.post("/elvax/generation-queue-manager/queue")
+async def queue_snapshot(request):
+    data = await request.json()
+    known_ids = data.get("known_ids") if isinstance(data, dict) else None
+    if not isinstance(known_ids, list) or any(not isinstance(value, str) for value in known_ids):
+        return web.json_response({"error": "Expected a list of prompt IDs."}, status=400)
+    known_ids = set(known_ids)
+    queue = PromptServer.instance.prompt_queue
+    with queue.mutex:
+        running, pending = queue.get_current_queue_volatile()
+        items = [{"id": item[1], "state": state, **({"tuple": item[:5]} if item[1] not in known_ids else {})}
+                 for state, entries in (("Running", running), ("Queued", sorted(pending, key=lambda item: item[0])))
+                 for item in entries]
+    return web.json_response({"items": items})
+
+
 @PromptServer.instance.routes.post("/elvax/generation-queue-manager/cancel-pending")
 async def cancel_pending_jobs(request):
     queue = PromptServer.instance.prompt_queue
     with queue.mutex:
-        _, pending = queue.get_current_queue_volatile()
-        for item in list(pending):
-            queue.delete_queue_item(lambda candidate: candidate[1] == item[1])
+        queue.wipe_queue()
     return web.json_response({"cancelled": True})
 
 
@@ -60,7 +74,7 @@ class GenerationQueueManager:
     FUNCTION = "refresh"
     OUTPUT_NODE = True
     CATEGORY = "Elvax Nodes/Utilities"
-    DESCRIPTION = "View, cancel, pause, and resume queued prompts. Paused prompt snapshots persist across restarts."
+    DESCRIPTION = "Manage this ComfyUI instance's shared queue across windows. Reorder, pause, resume, or cancel jobs. Stop a running job and keep it saved to run again. Paused jobs remain available after a restart."
 
     def refresh(self):
         return ()

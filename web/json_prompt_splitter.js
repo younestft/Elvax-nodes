@@ -1,7 +1,7 @@
 import { app } from "/scripts/app.js";
 
 const NODE_TYPE = "ElvaxJSONPromptSplitter";
-const BUILDER_TYPE = "ElvaxJSONPromptBuilder";
+const BUILDER_TYPE = "ElvaxPromptTemplateBuilder";
 const MAX_PROMPTS = 32;
 const MIN_HEIGHT = 130;
 const SLOT_HEIGHT = 22;

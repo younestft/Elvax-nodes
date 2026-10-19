@@ -2,13 +2,28 @@ import json
 import math
 
 
-class JSONPromptBuilder:
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f'Duplicate JSON field "{key}".')
+        result[key] = value
+    return result
+
+
+def _load_json(text):
+    value = json.loads(text, object_pairs_hook=_unique_object)
+    json.dumps(value, allow_nan=False)
+    return value
+
+
+class PromptTemplateBuilder:
     SEARCH_ALIASES = ["elvax", "json prompt", "json builder", "prompt builder"]
     CATEGORY = "Elvax/text"
-    DESCRIPTION = "Build a JSON prompt from editable, reorderable fields."
+    DESCRIPTION = "Create reusable prompt templates with editable, reorderable fields and nested groups. Load or save templates as JSON files and output the enabled fields as Prompt JSON."
     FUNCTION = "build_json"
     RETURN_TYPES = ("STRING", "INT", "FLOAT")
-    RETURN_NAMES = ("JSON", "video_count", "video_duration")
+    RETURN_NAMES = ("Prompt JSON", "video_count", "video_duration")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -21,8 +36,14 @@ class JSONPromptBuilder:
         }
 
     def build_json(self, fields_json="[]", video_count="", video_duration=""):
-        count_text = str(video_count or "").strip()
-        duration_text = str(video_duration or "").strip()
+        saved_fields = json.loads(fields_json or "[]")
+        enabled = saved_fields.get("fixedEnabled", {}) if isinstance(saved_fields, dict) else {}
+        count_text = str(video_count or "").strip() if enabled.get("video_count", True) else ""
+        duration_text = str(video_duration or "").strip() if enabled.get("video_duration", True) else ""
+        if enabled.get("video_count") is True and not count_text:
+            count_text = "0"
+        if enabled.get("video_duration") is True and not duration_text:
+            duration_text = "0"
         if count_text and not count_text.isdecimal():
             raise ValueError("video_count must be a non-negative integer or blank.")
         try:
@@ -37,12 +58,15 @@ class JSONPromptBuilder:
             raise ValueError("video_duration must be a non-negative decimal number or blank.") from error
         if duration_value is not None and not math.isfinite(duration_value):
             raise ValueError("video_duration must be a finite number or blank.")
-        if count_value == 0:
+        if enabled.get("video_count") is True and count_value <= 0:
+            raise ValueError("Enabled video count must be greater than zero.")
+        if enabled.get("video_duration") is True and duration_value <= 0:
+            raise ValueError("Enabled video duration must be greater than zero.")
+        if count_value == 0 and enabled.get("video_count") is not True:
             count_value = None
-        if duration_value == 0:
+        if duration_value == 0 and enabled.get("video_duration") is not True:
             duration_value = None
 
-        saved_fields = json.loads(fields_json or "[]")
         if isinstance(saved_fields, list):
             fields = saved_fields
             keys = {}
@@ -50,41 +74,46 @@ class JSONPromptBuilder:
             fields = saved_fields.get("fields", [])
             keys = saved_fields.get("keys", {})
             if not isinstance(keys, dict):
-                raise ValueError("JSON Prompt Builder fixed field keys must be an object.")
+                raise ValueError("Prompt Template Builder fixed field keys must be an object.")
         else:
-            raise ValueError("JSON Prompt Builder fields must be a list or builder state object.")
+            raise ValueError("Prompt Template Builder fields must be a list or builder state object.")
         if not isinstance(fields, list):
-            raise ValueError("JSON Prompt Builder fields must be a list.")
+            raise ValueError("Prompt Template Builder fields must be a list.")
 
-        count_key = str(keys.get("video_count", "video_count")).strip()
-        duration_key = str(keys.get("video_duration", "video_duration")).strip()
+        count_key = str(keys.get("video_count", "video_count")).strip() or "video_count"
+        duration_key = str(keys.get("video_duration", "video_duration")).strip() or "video_duration"
+        if count_key == duration_key:
+            raise ValueError("The two fixed fields must have different names.")
         result = {}
-        if count_value is not None and count_key:
+        if count_value is not None:
             result[count_key] = count_value
-        if duration_value is not None and duration_key:
+        if duration_value is not None:
             result[duration_key] = duration_value
         for key, value in self._build_object(fields, "root").items():
-            if key not in result:
-                result[key] = value
-        return json.dumps(result, ensure_ascii=False, indent=2), count_value, duration_value
+            if key in (count_key, duration_key):
+                raise ValueError(f'Field "{key}" conflicts with a fixed field. Rename it.')
+            result[key] = value
+        return json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False), count_value, duration_value
 
     def _build_object(self, fields, path):
         result = {}
         for field in fields:
             if not isinstance(field, dict):
-                raise ValueError("Each JSON Prompt Builder field must be an object.")
+                raise ValueError("Each Prompt Template Builder field must be an object.")
             if field.get("hidden"):
                 continue
             key = str(field.get("key", "")).strip()
             if not key:
                 continue
+            if key in result:
+                raise ValueError(f'Duplicate field "{path}.{key}". Rename one of these fields.')
             kind = field.get("type", "string")
             result[key] = self._build_value(kind, field.get("value", ""), f"{path}.{key}")
         return result
 
     def _build_value(self, kind, value, path):
         if kind == "number":
-            value = json.loads(str(value))
+            value = _load_json(str(value))
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError(f'Field "{path}" must contain a number.')
             return value
@@ -92,7 +121,7 @@ class JSONPromptBuilder:
             return value is True or str(value).lower() == "true"
         if kind == "json":
             try:
-                return json.loads(value)
+                return _load_json(value)
             except (TypeError, json.JSONDecodeError) as error:
                 raise ValueError(f'Field "{path}" contains invalid JSON: {error}') from error
         if kind == "object":

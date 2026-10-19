@@ -60,16 +60,16 @@ to detect and correct spelling and grammar errors.
 
 ![Prompt Edit / Preview](assets/prompt-edit-preview.gif)
 
-## JSON Prompt Builder / JSON Prompt Splitter
+## Prompt Template Builder / JSON Prompt Splitter
 
 Build a structured JSON prompt that you can feed to your favourite LLM
 with editable/nested fields, customizable field colours.
 Save/load preserves everything in the JSON including hidden fields and colours.
 
 JSON Prompt Splitter automatically detects and splits a big JSON,
-to the chosen number of videos specified in the JSON Prompt Builder.
+to the chosen number of videos specified in the Prompt Template Builder.
 
-![JSON Prompt Builder](assets/json-prompt-builder.jpg)
+![Prompt Template Builder](assets/prompt-template-builder.jpg)
 
 ## H3 Staged Samplers
 
@@ -116,7 +116,7 @@ See the current queue order and cancel an individual item directly from the node
 
 ![Queue Reference Map](assets/queue-reference-map.jpg)
 
-## Video Compare
+## Video Compare Pro
 
 Connect the source videos to the `before_video` and `after_video` sockets, then use
 **Load the Before Video** and **Load the After Video** to store each version.
@@ -129,7 +129,7 @@ Captures use ComfyUI's temp folder. Dropped videos reuse identical files already
 Connect any value and use the A/B toggle to choose which output receives it.
 The inactive output blocks its branch; its links stay connected and appear gray.
 An inactive route into an optional socket is treated as disconnected during execution.
-Video Compare can load through the active route while keeping both captured videos.
+Video Compare Pro can load through the active route while keeping both captured videos.
 The selected output is saved with the workflow.
 
 ## Circuit Switch

@@ -19,9 +19,8 @@ let queueActionInProgress = false;
 let queueStateError = null;
 let queueStorageReady = false;
 let submitQueuePrompt = null;
-let activePromptSubmissions = 0;
-let promptSubmissionWaiters = [];
 let savedJobs = new Map();
+let savedJobVersions = {};
 let queueStateWrites = Promise.resolve();
 let pollingStarted = false;
 const queueChannel = new BroadcastChannel(QUEUE_DB_NAME);
@@ -62,9 +61,20 @@ async function loadQueueState(db) {
   await new Promise((resolve, reject) => {
     const transaction = db.transaction([QUEUE_DB_STORE, QUEUE_JOBS_STORE], "readonly");
     const state = transaction.objectStore(QUEUE_DB_STORE).get(QUEUE_STATE_KEY);
-    const jobs = transaction.objectStore(QUEUE_JOBS_STORE).getAll();
+    const jobs = new Map();
+    state.onsuccess = () => {
+      for (const key of state.result?.jobKeys || []) {
+        if (savedJobs.has(key) && savedJobVersions[key] === state.result?.jobVersions?.[key]) {
+          jobs.set(key, savedJobs.get(key));
+        } else {
+          const request = transaction.objectStore(QUEUE_JOBS_STORE).get(key);
+          request.onsuccess = () => { if (request.result) jobs.set(key, request.result); };
+        }
+      }
+    };
     transaction.oncomplete = () => {
-      savedJobs = new Map(jobs.result.map((job) => [job.key, job]));
+      savedJobs = jobs;
+      savedJobVersions = state.result?.jobVersions || {};
       if (state.result) queueState = { paused: Boolean(state.result.paused),
         jobs: (state.result.jobKeys || []).map((key) => savedJobs.get(key)).filter(Boolean) };
       resolve();
@@ -85,23 +95,32 @@ queueChannel.onmessage = () => {
 };
 
 async function runQueueAction(view, action) {
-  return navigator.locks.request(`${QUEUE_DB_NAME}-action`, { ifAvailable: true }, async (lock) => {
-    if (!lock) {
-      view.error.textContent = "A queue action is in progress in another ComfyUI window.";
-      view.error.style.display = "block";
-      return;
-    }
-    const db = await queueDbReady;
-    if (!db) return;
-    await queueStateWrites;
-    await navigator.locks.request(`${QUEUE_DB_NAME}-state`, () => loadQueueState(db));
-    await action();
-  });
+  try {
+    return await navigator.locks.request(`${QUEUE_DB_NAME}-action`, { ifAvailable: true }, async (lock) => {
+      if (!lock) {
+      view.error.textContent = "Another window is updating the queue. Try again shortly.";
+        view.error.style.display = "block";
+        return;
+      }
+      const db = await queueDbReady;
+      if (!db) throw queueStateError || new Error("Saved queue storage is unavailable.");
+      await queueStateWrites;
+      await navigator.locks.request(`${QUEUE_DB_NAME}-state`, () => loadQueueState(db));
+      await action();
+    });
+  } catch (error) {
+    view.actionError = `Could not update queue: ${error.message || "request failed"}`;
+    view.error.textContent = view.actionError;
+    view.error.style.display = "block";
+    updateAllQueueControls();
+  }
 }
 
 async function persistQueueState(next) {
   const db = await queueDbReady;
   if (!db) throw queueStateError || new Error("Persistent queue storage is unavailable.");
+  const jobVersions = Object.fromEntries(next.jobs.map((job) => [job.key,
+    savedJobs.get(job.key) === job ? savedJobVersions[job.key] : crypto.randomUUID()]));
   await new Promise((resolve, reject) => {
     const transaction = db.transaction([QUEUE_DB_STORE, QUEUE_JOBS_STORE], "readwrite");
     const jobs = transaction.objectStore(QUEUE_JOBS_STORE);
@@ -112,13 +131,14 @@ async function persistQueueState(next) {
     try {
       for (const [key, job] of nextJobs) if (savedJobs.get(key) !== job) jobs.put(job, key);
       for (const key of savedJobs.keys()) if (!nextJobs.has(key)) jobs.delete(key);
-      transaction.objectStore(QUEUE_DB_STORE).put({ paused: next.paused, jobKeys: [...nextJobs.keys()] }, QUEUE_STATE_KEY);
+      transaction.objectStore(QUEUE_DB_STORE).put({ paused: next.paused, jobKeys: [...nextJobs.keys()], jobVersions }, QUEUE_STATE_KEY);
     } catch (error) {
       transaction.abort();
       reject(error);
     }
   });
   savedJobs = new Map(next.jobs.map((job) => [job.key, job]));
+  savedJobVersions = jobVersions;
 }
 
 function changeQueueState(update) {
@@ -163,53 +183,44 @@ function installQueuePauseHook() {
   submitQueuePrompt = originalQueuePrompt;
   api.__elvaxQueuePauseHook = originalQueuePrompt;
   api.queuePrompt = async function (number, promptData, options) {
-    await queueDbReady;
-    let saved = false;
-    try {
-      await changeQueueState((state) => {
-        if (!state.paused) return state;
-        const job = {
-          key: `paused-${crypto.randomUUID()}`,
-          promptId: null,
-          number,
-          prompt: structuredClone(promptData?.output || {}),
-          workflow: structuredClone(promptData?.workflow || null),
-          options: structuredClone(options || {}),
-        };
-        saved = true;
-        return { ...state, jobs: [...state.jobs, job] };
-      });
-    } catch (error) {
-      if (queueState.paused) throw error;
-      app.extensionManager?.toast?.add({
-        severity: "warn",
-        summary: "Saved-job storage unavailable",
-        detail: "Submitting this job directly to ComfyUI.",
-        life: 4000,
-      });
-    }
-    if (saved) {
-      app.extensionManager?.toast?.add({
-        severity: "info",
-        summary: "Queue paused",
-        detail: "This workflow was saved and will run when you resume the queue.",
-        life: 4000,
-      });
-      return { node_errors: {} };
-    }
-    activePromptSubmissions += 1;
-    try {
-      return await originalQueuePrompt.call(this, number, promptData, options);
-    } finally {
-      activePromptSubmissions -= 1;
-      if (!activePromptSubmissions) promptSubmissionWaiters.splice(0).forEach((resolve) => resolve());
-    }
+    return navigator.locks.request(`${QUEUE_DB_NAME}-submission`, { mode: "shared" }, async () => {
+      await queueDbReady;
+      let saved = false;
+      try {
+        await changeQueueState((state) => {
+          if (!state.paused) return state;
+          const job = {
+            key: `paused-${crypto.randomUUID()}`,
+            promptId: null,
+            number,
+            prompt: structuredClone(promptData?.output || {}),
+            workflow: structuredClone(promptData?.workflow || null),
+            options: structuredClone(options || {}),
+          };
+          saved = true;
+          return { ...state, jobs: [...state.jobs, job] };
+        });
+      } catch (error) {
+        if (queueState.paused) throw error;
+        app.extensionManager?.toast?.add({
+          severity: "warn",
+          summary: "Could not save job",
+          detail: "Sending this job directly to ComfyUI.",
+          life: 4000,
+        });
+      }
+      if (saved) {
+        app.extensionManager?.toast?.add({
+          severity: "info",
+          summary: "Job paused",
+          detail: "Resume the job when you are ready to run it.",
+          life: 4000,
+        });
+        return { node_errors: {} };
+      }
+      return originalQueuePrompt.call(this, number, promptData, options);
+    });
   };
-}
-
-function waitForPromptSubmissions() {
-  if (!activePromptSubmissions) return Promise.resolve();
-  return new Promise((resolve) => promptSubmissionWaiters.push(resolve));
 }
 
 installQueuePauseHook();
@@ -230,7 +241,7 @@ function updateQueueControls(view) {
   for (const button of view.list.querySelectorAll("[data-reorder-job]")) {
     button.disabled = queueActionInProgress || button.dataset.atLimit === "true";
   }
-  for (const button of view.list.querySelectorAll("[data-queue-pause]")) button.disabled = queueActionInProgress;
+  for (const button of view.list.querySelectorAll("[data-queue-pause], [data-queue-cancel]")) button.disabled = queueActionInProgress;
 }
 
 function updateAllQueueControls() {
@@ -246,7 +257,7 @@ async function pauseQueue(view) {
     await queueDbReady;
     if (!submitQueuePrompt) throw new Error("ComfyUI prompt submission is not available.");
     await changeQueueState((state) => ({ ...state, paused: true }));
-    await waitForPromptSubmissions();
+    await navigator.locks.request(`${QUEUE_DB_NAME}-submission`, () => {});
 
     const response = await api.fetchApi("/queue");
     if (!response.ok) throw new Error(`ComfyUI returned ${response.status}`);
@@ -305,7 +316,7 @@ async function resumeQueue(view, jobKey = null) {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job_key: job.key }),
         });
         if (!response.ok || !(await response.json()).submitted) {
-          throw new Error("A previous submission could not be confirmed. Check the queue and history before cancelling this saved item.");
+          throw new Error("This job may already have been submitted. Check the queue and history before trying again.");
         }
       } else {
         job = { ...job, submitting: true };
@@ -342,9 +353,9 @@ async function resumeQueue(view, jobKey = null) {
 
 async function removeAllJobs(view) {
   if (queueActionInProgress) return;
-  const message = "Cancel all waiting and saved jobs? The running generation will continue.";
+  const message = "Cancel all queued and paused jobs in this ComfyUI instance? The running job will continue. This cannot be undone.";
   const confirmed = app.extensionManager?.dialog?.confirm
-    ? await app.extensionManager.dialog.confirm({ title: "Cancel all queued jobs?", message })
+    ? await app.extensionManager.dialog.confirm({ title: "Cancel queued and paused jobs?", message })
     : window.confirm(message);
   if (!confirmed || queueActionInProgress) return;
   queueActionInProgress = true;
@@ -373,8 +384,9 @@ async function finishStoppedJobs() {
   for (const job of queueState.jobs.filter((item) => item.stopPending)) {
     const response = await api.fetchApi(`/api/jobs/${encodeURIComponent(job.promptId)}/cancel`, { method: "POST" });
     if (!response.ok) throw new Error("Could not stop the running job. Try again.");
-    await changeQueueState((state) => ({ ...state, jobs: state.jobs.map((item) =>
-      item.key === job.key ? { ...item, stopPending: false } : item) }));
+    const { cancelled } = await response.json();
+    await changeQueueState((state) => ({ ...state, jobs: cancelled ? state.jobs.map((item) =>
+      item.key === job.key ? { ...item, stopPending: false } : item) : state.jobs.filter((item) => item.key !== job.key) }));
   }
 }
 
@@ -646,7 +658,7 @@ function createItem(item, view, order) {
         try {
           await runQueueAction(view, () => movePausedJob(item.job, direction));
         } catch (error) {
-          view.actionError = `Could not reorder saved job: ${error.message || "request failed"}`;
+          view.actionError = `Could not reorder job: ${error.message || "request failed"}`;
           view.error.textContent = view.actionError;
           view.error.style.display = "block";
         }
@@ -699,7 +711,11 @@ function createItem(item, view, order) {
   const cancel = el("button", "elvax-generation-queue__cancel");
   actionIcon(cancel, "remove", isRunning ? "Cancel job - discard without saving" : "Cancel job");
   cancel.type = "button";
-  if (item.state === "Queued") cancel.style.marginLeft = "0";
+  if (item.state === "Queued") {
+    cancel.style.marginLeft = "0";
+    cancel.dataset.queueCancel = "true";
+    cancel.disabled = queueActionInProgress;
+  }
   if (isRunning) {
     cancel.disabled = queueActionInProgress;
     cancel.style.marginLeft = "0";
@@ -716,9 +732,11 @@ function createItem(item, view, order) {
     const confirmed = app.extensionManager?.dialog?.confirm
       ? await app.extensionManager.dialog.confirm({
           title: "Cancel job?",
-          message: `Cancel #${order}?`,
+          message: isRunning ? "Cancel the running job without saving it? This cannot be undone." :
+            `Cancel job #${order}? This cannot be undone.`,
         })
-      : window.confirm(`Cancel #${order}?`);
+      : window.confirm(isRunning ? "Cancel the running job without saving it? This cannot be undone." :
+          `Cancel job #${order}? This cannot be undone.`);
     if (!confirmed) return;
 
     cancel.disabled = true;
@@ -727,18 +745,25 @@ function createItem(item, view, order) {
         await runQueueAction(view, () => removePausedJob(item.job, view));
         return;
       }
-      const response = await api.fetchApi(`/api/jobs/${encodeURIComponent(item.promptId)}/cancel`, {
-        method: "POST",
+      await runQueueAction(view, async () => {
+        const response = await api.fetchApi(`/api/jobs/${encodeURIComponent(item.promptId)}/cancel`, {
+          method: "POST",
+        });
+        if (!response.ok) throw new Error(`ComfyUI returned ${response.status}`);
+        await changeQueueState((state) => {
+          const jobs = state.jobs.filter((job) => job.promptId !== item.promptId);
+          if (jobs.length === state.jobs.length) return state;
+          return { ...state, jobs, paused: jobs.length ? state.paused : false };
+        });
+        app.extensionManager?.toast?.add({
+          severity: "info",
+          summary: "Cancellation requested",
+          detail: isRunning ? "The running job will stop without being saved." : `Job #${order} will not run.`,
+          life: 2500,
+        });
+        view.signature = null;
+        refreshQueue();
       });
-      if (!response.ok) throw new Error(`ComfyUI returned ${response.status}`);
-      app.extensionManager?.toast?.add({
-        severity: "info",
-        summary: "Cancellation requested",
-        detail: `Queue #${order}`,
-        life: 2500,
-      });
-      view.signature = null;
-      refreshQueue();
     } catch (error) {
       cancel.disabled = false;
       app.extensionManager?.toast?.add({
@@ -799,14 +824,16 @@ async function refreshQueue() {
   refreshInProgress = true;
   try {
     await queueDbReady;
-    const response = await api.fetchApi("/queue");
+    const previous = new Map(serverQueueItems.map((item) => [item.promptId, item]));
+    const response = await api.fetchApi("/elvax/generation-queue-manager/queue", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ known_ids: [...previous.keys()] }),
+    });
     if (!response.ok) throw new Error(`ComfyUI returned ${response.status}`);
     const queue = await response.json();
-    serverQueueItems = [
-      ...(queue.queue_running || []).map((tuple) => queueItem(tuple, "Running")),
-      ...(queue.queue_pending || []).slice().sort((a, b) => a[0] - b[0])
-        .map((tuple) => queueItem(tuple, "Queued")),
-    ];
+    serverQueueItems = queue.items.map((item) => item.tuple ? queueItem(item.tuple, item.state) :
+      { ...previous.get(item.id), state: item.state });
     for (const view of nodeViews) {
       if (!view.root.isConnected) continue;
       const error = view.actionError || queueStateError?.message;
@@ -904,6 +931,7 @@ function installNode(node) {
 
   const root = document.createElement("div");
   root.className = "elvax-generation-queue";
+  root.title = "Controls this ComfyUI instance's shared queue.";
   const header = el("div", "elvax-generation-queue__header");
   const heading = el("div", "elvax-generation-queue__heading");
   const counts = [];
@@ -924,7 +952,7 @@ function installNode(node) {
     event.stopPropagation();
     runQueueAction(view, () => pauseQueue(view));
   });
-  actionIcon(pauseButton, "pause", "Pause all queued jobs");
+  actionIcon(pauseButton, "pause", "Pause all queued jobs and new submissions");
   const resumeButton = el("button", "elvax-generation-queue__pause");
   actionIcon(resumeButton, "play", "Resume all paused jobs");
   const removeAllButton = el("button", "elvax-generation-queue__pause");

@@ -12,9 +12,9 @@ from .llm_turbo.nodes import LLMTurbo
 from .nodes.post_processing import PostProcessing
 from .nodes.generation_queue_manager import GenerationQueueManager
 from .nodes.seed_nodes import ChainSeed, StageSeed
-from .nodes.json_prompt_builder import JSONPromptBuilder
+from .nodes.prompt_template_builder import PromptTemplateBuilder
 from .nodes.json_prompt_splitter import JSONPromptSplitter
-from .nodes.video_compare import VideoCompare
+from .nodes.video_compare_pro import VideoComparePro
 from .nodes.reroute_switch import RerouteSwitch
 from .nodes.circuit_switch import CircuitSwitch
 
@@ -34,9 +34,9 @@ NODE_CLASS_MAPPINGS = {
     "ElvaxGenerationQueueManager": GenerationQueueManager,
     "ElvaxStageSeed": StageSeed,
     "ElvaxChainSeed": ChainSeed,
-    "ElvaxJSONPromptBuilder": JSONPromptBuilder,
+    "ElvaxPromptTemplateBuilder": PromptTemplateBuilder,
     "ElvaxJSONPromptSplitter": JSONPromptSplitter,
-    "ElvaxVideoCompare": VideoCompare,
+    "ElvaxVideoComparePro": VideoComparePro,
     "ElvaxRerouteSwitch": RerouteSwitch,
     "ElvaxCircuitSwitch": CircuitSwitch,
 }
@@ -56,9 +56,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ElvaxGenerationQueueManager": "Generation Queue Manager",
     "ElvaxStageSeed": "Stage Seed",
     "ElvaxChainSeed": "Chain Seed",
-    "ElvaxJSONPromptBuilder": "JSON Prompt Builder",
+    "ElvaxPromptTemplateBuilder": "Prompt Template Builder",
     "ElvaxJSONPromptSplitter": "JSON Prompt Splitter",
-    "ElvaxVideoCompare": "Video Compare",
+    "ElvaxVideoComparePro": "Video Compare Pro",
     "ElvaxRerouteSwitch": "Reroute Switch",
     "ElvaxCircuitSwitch": "Circuit Switch",
 }

@@ -2,7 +2,7 @@ import { app } from "/scripts/app.js";
 import { api } from "/scripts/api.js";
 import { CIRCUIT_SWITCH, REROUTE_SWITCH, ROUTE_CHANGED, selectedOutput } from "./reroute_switch.js";
 
-const NODE_TYPE = "ElvaxVideoCompare";
+const NODE_TYPE = "ElvaxVideoComparePro";
 const MIN_HEIGHT = 180;
 const MIN_SIZE = 360;
 const GENERATION_ORDER = ["Steps", "Sampler", "Scheduler", "Model", "LoRA", "Seed",
@@ -60,12 +60,16 @@ function timeLabel(time) {
 }
 
 function install(node) {
-  if (node.__elvaxVideoCompare) return;
-  node.__elvaxVideoCompare = true;
+  if (node.__elvaxVideoComparePro) return;
+  node.__elvaxVideoComparePro = true;
   node.properties ||= {};
-  node.properties.elvaxVideoCompare ||= { position: 50, volume: 1, muted: false, loop: true, audioSource: null };
-  const state = () => node.properties.elvaxVideoCompare;
+  node.properties.elvaxVideoComparePro ||= { position: 50, volume: 1, muted: false, loop: true, audioSource: null };
+  const state = () => node.properties.elvaxVideoComparePro;
   function migrateAudioDefault() {
+    if (state().audioAuto === undefined) {
+      state().audioAuto = true;
+      state().audioSource = "before";
+    }
     if (state().audioDefaultVersion === 1) return;
     state().muted = false;
     state().audioDefaultVersion = 1;
@@ -77,6 +81,12 @@ function install(node) {
   let playStarting = false;
   let playRequest = 0;
   let playbackMaster = null;
+  let audioContext = null;
+  let audioUnavailable = false;
+  let lastAudioSource = null;
+  let lastVisibleSide = null;
+  let lastTickTime = -Infinity;
+  const audioGains = new Map();
   let playbackDuration = 0;
   let renderedTime = null;
   let seekRenderTarget = null;
@@ -90,159 +100,166 @@ function install(node) {
   const frameCallbacks = new Map();
   let middlePointer = null;
   let hoveringVideo = false;
+  let cachedVideoBounds = null;
   const captureRequests = { before: 0, after: 0 };
   const captureButtons = new Map();
   const autoCheckboxes = new Map();
+  const uploadStatus = { before: "", after: "" };
+  const uploads = new Map();
 
   const root = document.createElement("div");
-  root.className = "elvax-video-compare";
+  root.className = "elvax-video-compare-pro";
   root.style.cssText = "position:relative;display:flex;flex-direction:column;gap:var(--compare-gap,6px);width:100%;height:100%;min-height:0;min-width:0;box-sizing:border-box;contain:size;overflow:hidden;font:12px Arial,sans-serif;color:#eee;";
   const style = document.createElement("style");
   style.textContent = `
-    .elvax-video-compare,.elvax-video-compare * {user-select:none;-webkit-user-select:none;}
-    .elvax-video-compare .status {user-select:text;-webkit-user-select:text;}
-    .elvax-video-compare .generation-panel,.elvax-video-compare .generation-panel * {user-select:text;-webkit-user-select:text;}
-    .elvax-video-compare button,.elvax-video-compare input {outline:none !important;-webkit-tap-highlight-color:transparent;}
-    .elvax-video-compare input[type=range]:focus,.elvax-video-compare input[type=range]:focus-visible {outline:none !important;}
-    .elvax-video-compare input[type=range]::-moz-focus-outer {border:0;}
-    .elvax-video-compare button {box-sizing:border-box;font:12px Arial,sans-serif;color:#eee;cursor:pointer;white-space:nowrap;}
-    .elvax-video-compare button:disabled {opacity:.5;cursor:wait;}
-    .elvax-video-compare .capture-row {display:flex;}
-    .elvax-video-compare .captions {--caption-inset:8px;position:relative;z-index:1;width:100%;min-width:0;box-sizing:border-box;display:flex;flex:0 0 auto;align-items:center;gap:8px;padding:6px calc(var(--caption-right,0px) + var(--caption-inset)) 6px calc(var(--caption-left,0px) + var(--caption-inset));font-size:11px;line-height:16px;}
-    .elvax-video-compare .media-row {position:relative;display:grid;flex:1;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);min-height:0;min-width:0;overflow:hidden;}
-    .elvax-video-compare .generation-open .media-row {grid-template-columns:minmax(0,1fr) 6px minmax(0,var(--generation-panel-width,50%));}
-    .elvax-video-compare .media-row > .captions {grid-area:1 / 1;grid-template-columns:minmax(0,1fr) minmax(0,2fr) minmax(0,1fr);min-height:40px;}
-    .elvax-video-compare .media-row > .stage {grid-area:2 / 1;min-width:0;}
-    .elvax-video-compare .generation-panel {grid-area:1 / 3 / 3 / 4;display:none;flex-direction:column;min-width:0;min-height:0;box-sizing:border-box;overflow:hidden;border:1px solid #ffffff1c;border-radius:0;background:#171b20;color:#c7cdd3;font-size:11px;line-height:1.5;container-type:inline-size;}
-    .elvax-video-compare .generation-resizer {grid-area:1 / 2 / 3 / 3;display:none;position:relative;cursor:col-resize;touch-action:none;}
-    .elvax-video-compare .generation-open .generation-resizer {display:block;}
-    .elvax-video-compare .generation-resizer::after {content:"";position:absolute;inset:0 2px;background:#ffffff14;transition:background .15s;}
-    .elvax-video-compare .generation-resizer:hover::after,.elvax-video-compare .generation-resizer:focus-visible::after {background:#8bd4ff80;}
-    .elvax-video-compare .generation-header {display:flex;flex:0 0 auto;align-items:center;gap:6px;min-height:40px;padding:4px 6px;box-sizing:border-box;border-bottom:1px solid #ffffff0d;}
-    .elvax-video-compare .generation-header .generation-heading {flex:1;min-width:0;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-    .elvax-video-compare .generation-heading {color:#dce7ef;font-size:11px;font-weight:600;}
-    .elvax-video-compare .generation-toggle {position:relative;display:inline-flex;flex:0 0 24px;align-items:center;justify-content:center;width:24px;height:24px;padding:4px;border:1px solid #ffffff18;border-radius:5px;background:#17232c;color:#8bd4ff;}
-    .elvax-video-compare .generation-toggle:hover {background:#ffffff0c;border-color:#ffffff14;color:#fff;}
-    .elvax-video-compare .generation-toggle[aria-expanded=true] {border-color:#ffffff20;border-radius:2px;background:#202b34;color:#b9e3ff;}
-    .elvax-video-compare .generation-icon {width:15px;height:15px;flex:0 0 15px;transform:scaleX(-1);}
-    .elvax-video-compare .generation-toggle[aria-expanded=true] .generation-icon {transform:none;}
-    .elvax-video-compare .generation-count {margin-left:auto;padding:2px 6px;border-radius:4px;background:#8bd4ff12;color:#a9cce3;font-size:9px;white-space:nowrap;}
-    .elvax-video-compare .generation-count:empty {display:none;}
+    .elvax-video-compare-pro,.elvax-video-compare-pro * {user-select:none;-webkit-user-select:none;}
+    .elvax-video-compare-pro .status {user-select:text;-webkit-user-select:text;}
+    .elvax-video-compare-pro .generation-panel,.elvax-video-compare-pro .generation-panel * {user-select:text;-webkit-user-select:text;}
+    .elvax-video-compare-pro button,.elvax-video-compare-pro input {outline:none !important;-webkit-tap-highlight-color:transparent;}
+    .elvax-video-compare-pro input[type=range]:focus,.elvax-video-compare-pro input[type=range]:focus-visible {outline:none !important;}
+    .elvax-video-compare-pro input[type=range]::-moz-focus-outer {border:0;}
+    .elvax-video-compare-pro button {box-sizing:border-box;font:12px Arial,sans-serif;color:#eee;cursor:pointer;white-space:nowrap;}
+    .elvax-video-compare-pro button:disabled {opacity:.5;cursor:wait;}
+    .elvax-video-compare-pro .capture-row {display:flex;}
+    .elvax-video-compare-pro .captions {--caption-inset:8px;position:relative;z-index:1;width:100%;min-width:0;box-sizing:border-box;display:flex;flex:0 0 auto;align-items:center;gap:8px;padding:6px calc(var(--caption-right,0px) + var(--caption-inset)) 6px calc(var(--caption-left,0px) + var(--caption-inset));font-size:11px;line-height:16px;}
+    .elvax-video-compare-pro .media-row {position:relative;display:grid;flex:1;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);min-height:0;min-width:0;overflow:hidden;}
+    .elvax-video-compare-pro .generation-open .media-row {grid-template-columns:minmax(0,1fr) 6px minmax(0,var(--generation-panel-width,50%));}
+    .elvax-video-compare-pro .media-row > .captions {grid-area:1 / 1;grid-template-columns:minmax(0,1fr) minmax(0,2fr) minmax(0,1fr);min-height:40px;}
+    .elvax-video-compare-pro .media-row > .stage {grid-area:2 / 1;min-width:0;}
+    .elvax-video-compare-pro .generation-panel {grid-area:1 / 3 / 3 / 4;display:none;flex-direction:column;min-width:0;min-height:0;box-sizing:border-box;overflow:hidden;border:1px solid #ffffff1c;border-radius:0;background:#171b20;color:#c7cdd3;font-size:11px;line-height:1.5;container-type:inline-size;}
+    .elvax-video-compare-pro .generation-resizer {grid-area:1 / 2 / 3 / 3;display:none;position:relative;cursor:col-resize;touch-action:none;}
+    .elvax-video-compare-pro .generation-open .generation-resizer {display:block;}
+    .elvax-video-compare-pro .generation-resizer::after {content:"";position:absolute;inset:0 2px;background:#ffffff14;transition:background .15s;}
+    .elvax-video-compare-pro .generation-resizer:hover::after,.elvax-video-compare-pro .generation-resizer:focus-visible::after {background:#8bd4ff80;}
+    .elvax-video-compare-pro .generation-header {display:flex;flex:0 0 auto;align-items:center;gap:6px;min-height:40px;padding:4px 6px;box-sizing:border-box;border-bottom:1px solid #ffffff0d;}
+    .elvax-video-compare-pro .generation-header .generation-heading {flex:1;min-width:0;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .elvax-video-compare-pro .generation-heading {color:#dce7ef;font-size:11px;font-weight:600;}
+    .elvax-video-compare-pro .generation-toggle {position:relative;display:inline-flex;flex:0 0 24px;align-items:center;justify-content:center;width:24px;height:24px;padding:4px;border:1px solid #ffffff18;border-radius:5px;background:#17232c;color:#8bd4ff;}
+    .elvax-video-compare-pro .generation-toggle:hover {background:#ffffff0c;border-color:#ffffff14;color:#fff;}
+    .elvax-video-compare-pro .generation-toggle[aria-expanded=true] {border-color:#ffffff20;border-radius:2px;background:#202b34;color:#b9e3ff;}
+    .elvax-video-compare-pro .generation-icon {width:15px;height:15px;flex:0 0 15px;transform:scaleX(-1);}
+    .elvax-video-compare-pro .generation-toggle[aria-expanded=true] .generation-icon {transform:none;}
+    .elvax-video-compare-pro .generation-count {margin-left:auto;padding:2px 6px;border-radius:4px;background:#8bd4ff12;color:#a9cce3;font-size:9px;white-space:nowrap;}
+    .elvax-video-compare-pro .generation-count:empty {display:none;}
     @container (max-width: 240px) {.generation-count {display:none;}}
-    .elvax-video-compare .generation-content {display:block;flex:1;min-height:0;overflow:auto;padding:12px;scrollbar-width:thin;scrollbar-color:#ffffff26 transparent;}
-    .elvax-video-compare .generation-comparison {position:relative;margin-top:12px;overflow:hidden;border:1px solid #ffffff12;border-radius:8px;background:#13181d;}
-    .elvax-video-compare .generation-comparison.has-rows.before-active {background-image:linear-gradient(to right,#39b98116 0 50%,transparent 50% 100%);}
-    .elvax-video-compare .generation-comparison.has-rows.after-active {background-image:linear-gradient(to right,transparent 0 50%,#39b98116 50% 100%);}
-    .elvax-video-compare .generation-comparison.has-rows::before {content:"";position:absolute;top:0;bottom:0;left:50%;width:1px;background:#ffffff24;pointer-events:none;}
-    .elvax-video-compare .generation-comparison.before-active .generation-columns > :first-child,.elvax-video-compare .generation-comparison.before-active .generation-value:first-child,.elvax-video-compare .generation-comparison.after-active .generation-columns > :last-child,.elvax-video-compare .generation-comparison.after-active .generation-value:last-child {color:#91dbb6;}
-    .elvax-video-compare .generation-columns,.elvax-video-compare .generation-values {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));}
-    .elvax-video-compare .generation-columns {min-height:32px;padding:7px 0;box-sizing:border-box;background:#ffffff04;color:#c1ccd5;font-size:11px;letter-spacing:.01em;border-bottom:1px solid #ffffff18;}
-    .elvax-video-compare .generation-columns .generation-heading {display:flex;align-items:center;font-size:inherit;font-weight:600;color:inherit;line-height:1.2;}
-    .elvax-video-compare .generation-columns .generation-heading:first-child,.elvax-video-compare .generation-value:first-child {padding-left:6px;padding-right:8px;}
-    .elvax-video-compare .generation-columns .generation-heading:last-child,.elvax-video-compare .generation-value:last-child {padding-left:8px;padding-right:6px;}
-    .elvax-video-compare .generation-table {display:flex;flex-direction:column;}
-    .elvax-video-compare .generation-row {min-width:0;padding:7px 0 8px;border-bottom:1px solid #ffffff14;}
-    .elvax-video-compare .generation-name {width:50%;box-sizing:border-box;margin:0 0 3px;padding:0 8px 0 6px;color:#8d9aa7;font-size:10px;overflow-wrap:anywhere;}
-    .elvax-video-compare .generation-value {min-width:0;overflow-wrap:anywhere;}
-    .elvax-video-compare .generation-strength {color:#f2cf62;}
-    .elvax-video-compare .generation-row.is-different .generation-value:last-child {color:#b9dcf3;}
-    .elvax-video-compare .generation-empty {padding:12px;border:1px solid #ffffff0c;border-radius:5px;background:#ffffff03;color:#9aa6b1;}
-    .elvax-video-compare .generation-controls {display:flex;align-items:center;margin-bottom:12px;color:#9da8b3;font-size:10px;}
-    .elvax-video-compare .generation-controls label {display:flex;align-items:center;gap:6px;cursor:pointer;}
-    .elvax-video-compare .generation-controls input {appearance:none;position:relative;flex:0 0 13px;width:13px;height:13px;margin:0;border:1px solid #65717b;border-radius:3px;background:#ffffff05;cursor:pointer;}
-    .elvax-video-compare .generation-controls input:checked {border-color:#8bd4ff;background:#8bd4ff;}
-    .elvax-video-compare .generation-controls input:checked::after {content:"";position:absolute;left:4px;top:1px;width:3px;height:6px;border:solid #17232c;border-width:0 1.5px 1.5px 0;transform:rotate(45deg);}
-    .elvax-video-compare .generation-controls input:focus-visible {box-shadow:0 0 0 2px #8bd4ff40;}
-    .elvax-video-compare .caption-label {color:#bbb;transition:color .16s ease,text-shadow .16s ease;}
-    .elvax-video-compare .caption-label {flex:0 0 auto;white-space:nowrap;}
-    .elvax-video-compare .caption-after {grid-area:1 / 3;display:flex;align-items:center;justify-content:flex-end;gap:6px;}
-    .elvax-video-compare .caption-label.is-active {color:#00ff78;text-shadow:0 0 8px #00ff7866;}
-    .elvax-video-compare .caption-label.audio-source-hover {text-decoration:underline;text-decoration-color:#8bd4ffcc;text-decoration-thickness:1px;text-underline-offset:2px;}
-    .elvax-video-compare .capture-control {display:flex;align-items:center;flex:1 1 0;min-width:0;overflow:hidden;border:1px solid #666;border-radius:4px;background:#333;}
-    .elvax-video-compare .capture {flex:1 1 0;min-width:0;min-height:26px;padding:5px 6px;line-height:16px;border:0;background:transparent;}
-    .elvax-video-compare .capture-auto {display:flex;flex:0 0 auto;align-items:center;gap:4px;padding:0 6px;cursor:pointer;color:#c1cbd3;font-size:10px;}
-    .elvax-video-compare .capture-auto input {appearance:none;position:relative;width:11px;height:11px;margin:0;border:1px solid #86939f;border-radius:3px;background:#ffffff05;cursor:pointer;}
-    .elvax-video-compare .capture-auto input:checked {border-color:#8bd4ff;background:#8bd4ff;}
-    .elvax-video-compare .capture-auto input:checked::after {content:"";position:absolute;left:3px;top:1px;width:3px;height:5px;border:solid #17232c;border-width:0 1.5px 1.5px 0;transform:rotate(45deg);}
-    .elvax-video-compare .capture-auto input:focus-visible {box-shadow:0 0 0 2px #8bd4ff40;}
-    .elvax-video-compare .capture-control:has(.capture:not(:disabled)):hover {background:#444;}
-    .elvax-video-compare .capture:disabled {cursor:default;}
-    .elvax-video-compare .mode-row {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));flex:0 0 auto;gap:4px;padding:2px 8px;box-sizing:border-box;border-bottom:1px solid #ffffff12;}
-    .elvax-video-compare .mode-cell {position:relative;min-width:0;}
-    .elvax-video-compare .mode-button {display:flex;align-items:center;justify-content:center;width:100%;height:24px;padding:1px 8px;border:1px solid transparent;border-radius:6px;background:transparent;font-size:10px;line-height:16px;color:#929eaa;transition:background .15s,color .15s,border-color .15s;}
-    .elvax-video-compare .mode-button.before-after-control {gap:4px;padding-left:2px;padding-right:2px;}
-    .elvax-video-compare .before-after-option {font-size:inherit;color:#929eaa;transition:color .15s;}
-    .elvax-video-compare .before-after-option.is-current {color:#d6ecff;}
-    .elvax-video-compare .before-after-switch {position:relative;flex:0 0 2em;width:2em;height:1.2em;box-sizing:border-box;border:0;border-radius:8em;background:#293541;box-shadow:inset 0 0 0 1px #68798a;}
-    .elvax-video-compare .before-after-switch::after {content:"";position:absolute;top:50%;left:.2em;width:.8em;height:.8em;border-radius:50%;background:#d6ecff;transform:translateY(-50%);transition:transform .18s cubic-bezier(.2,.8,.2,1);}
-    .elvax-video-compare .before-after-switch[data-side=after]::after {transform:translate(.8em,-50%);}
-    .elvax-video-compare .before-after-switch[data-side=neutral] {background:#25282d;box-shadow:inset 0 0 0 1px #454b52;}
-    .elvax-video-compare .before-after-arrows {position:absolute;left:50%;top:50%;display:none;width:1.4em;height:.9em;overflow:visible;transform:translate(-50%,-50%);}
-    .elvax-video-compare .before-after-arrows path {fill:none;stroke:#9aa3ad;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
-    .elvax-video-compare .before-after-switch[data-side=neutral]::after {display:none;}
-    .elvax-video-compare .before-after-switch[data-side=neutral] .before-after-arrows {display:block;}
-    .elvax-video-compare .mode-button:hover {background:#ffffff0c;color:#eee;}
-    .elvax-video-compare .mode-button[aria-pressed=true] {background:#243749;border-color:#4c6a83;color:#d6ecff;}
-    .elvax-video-compare .mode-button:disabled,.elvax-video-compare .mode-button:disabled:hover,.elvax-video-compare .mode-button:disabled[aria-pressed=true] {background:#242629;border-color:#3b3e42;color:#747a80;opacity:.6;cursor:default;}
-    .elvax-video-compare .mode-button:disabled .before-after-option {color:#747a80;}
-    .elvax-video-compare .mode-button:disabled .before-after-switch {background:#292c30;box-shadow:inset 0 0 0 1px #454b52;}
-    .elvax-video-compare .mode-button:disabled .before-after-switch::after {background:#81878e;}
-    .elvax-video-compare .mode-button:disabled .before-after-arrows path {stroke:#747a80;}
-    .elvax-video-compare .transport button {display:flex;flex:0 0 24px;align-items:center;justify-content:center;width:24px;height:24px;padding:3px;background:transparent;border:0;border-radius:4px;}
-    .elvax-video-compare .transport button:hover {background:#ffffff24;}
-    .elvax-video-compare .transport button.audio-source {background:#8bd4ff16;box-shadow:inset 0 0 0 1px #8bd4ff40;color:#8bd4ff;font-size:11px;font-weight:600;}
-    .elvax-video-compare .transport button.audio-source:disabled {cursor:default;}
-    .elvax-video-compare .transport {gap:4px;padding:4px 6px;}
-    .elvax-video-compare .time {flex:0 0 auto;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:11px;}
-    .elvax-video-compare .volume {flex:0 1 42px;width:42px;min-width:14px;}
-    .elvax-video-compare input[type=range] {appearance:none;height:3px;margin:0;background:#888;cursor:pointer;min-width:0;}
-    .elvax-video-compare input[type=range]::-webkit-slider-thumb {appearance:none;width:9px;height:9px;background:white;border-radius:50%;}
-    .elvax-video-compare .blend-control {grid-area:1 / 2;position:relative;justify-self:center;width:100%;max-width:200px;min-width:0;height:15px;box-sizing:border-box;}
-    .elvax-video-compare .blend-control::before {content:"";position:absolute;inset:0;border-radius:2px;background:linear-gradient(90deg,#8faabb26 var(--blend-fill,50%),#ffffff04 var(--blend-fill,50%));box-shadow:inset 0 -1px #ffffff18;transition:filter .15s;pointer-events:none;}
-    .elvax-video-compare .blend-control::after {content:"";position:absolute;left:clamp(1px,var(--blend-fill,50%),calc(100% - 1px));top:4px;bottom:4px;width:1px;background:#b7cbd8;opacity:0;pointer-events:none;transition:opacity .15s;}
-    .elvax-video-compare .blend-control:hover::before,.elvax-video-compare .blend-control:focus-within::before {filter:brightness(1.4);}
-    .elvax-video-compare .blend-control:hover::after,.elvax-video-compare .blend-control:focus-within::after {opacity:1;}
-    .elvax-video-compare input.blend[type=range] {position:absolute;inset:0;z-index:1;width:100%;height:100%;min-width:0;margin:0;background:transparent;cursor:ew-resize;touch-action:none;}
-    .elvax-video-compare input.blend[type=range]::-webkit-slider-thumb {width:1px;height:1px;background:transparent;box-shadow:none;}
-    .elvax-video-compare input.blend[type=range]::-moz-range-thumb {width:1px;height:1px;border:0;background:transparent;}
-    .elvax-video-compare .blend-value {position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;color:#b8c6d0;font-size:9px;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap;}
-    .elvax-video-compare .status:empty {display:none;}
-    .elvax-video-compare:fullscreen {background:#111;padding:16px;box-sizing:border-box;--compare-gap:12px;}
-    .elvax-video-compare:fullscreen .capture-row {display:none;}
-    .elvax-video-compare:fullscreen .mode-row {padding:8px;gap:6px;}
-    .elvax-video-compare:fullscreen .mode-row {width:100%;align-self:stretch;padding:8px max(8px,calc((100% - 960px)/2 + 8px));box-sizing:border-box;}
-    .elvax-video-compare:fullscreen .mode-button {height:40px;padding:4px;font-size:clamp(16px,1.25vw,22px);line-height:1;}
-    .elvax-video-compare:fullscreen .captions {--caption-inset:12px;font-size:clamp(16px,1.4vw,24px);line-height:1.4;padding-top:10px;padding-bottom:10px;}
-    .elvax-video-compare:fullscreen .generation-panel {font-size:clamp(11px,.75vw,14px);}
-    .elvax-video-compare:fullscreen .generation-open .media-row {grid-template-columns:minmax(0,1fr) 6px minmax(0,var(--generation-fullscreen-width,33.333333%));}
-    .elvax-video-compare:fullscreen .generation-header {height:57px;min-height:57px;padding:4px 12px;}
-    .elvax-video-compare:fullscreen .generation-header .generation-heading {font-size:clamp(15px,1vw,20px);}
-    .elvax-video-compare:fullscreen .generation-count {padding:4px 8px;font-size:clamp(12px,.75vw,16px);}
-    .elvax-video-compare:fullscreen .generation-controls {margin-bottom:16px;font-size:clamp(14px,.9vw,18px);}
-    .elvax-video-compare:fullscreen .generation-controls label {gap:10px;}
-    .elvax-video-compare:fullscreen .generation-controls input {flex-basis:18px;width:18px;height:18px;}
-    .elvax-video-compare:fullscreen .generation-controls input:checked::after {left:5px;top:2px;width:5px;height:8px;}
-    .elvax-video-compare:fullscreen .generation-toggle {flex-basis:48px;width:48px;height:48px;padding:8px;}
-    .elvax-video-compare:fullscreen .generation-icon {width:28px;height:28px;flex-basis:28px;}
-    .elvax-video-compare:fullscreen .generation-content {padding:12px;}
-    .elvax-video-compare:fullscreen .media-row {width:100%;}
-    .elvax-video-compare:fullscreen .blend-value {font-size:clamp(13px,1vw,16px);}
-    .elvax-video-compare:fullscreen .blend-control {height:30px;max-width:240px;}
-    .elvax-video-compare:fullscreen .video-panel,.elvax-video-compare:fullscreen .status {width:100%;}
-    .elvax-video-compare:fullscreen .transport {gap:4px;padding:8px 6px;}
-    .elvax-video-compare:fullscreen .transport button {flex-basis:36px;width:36px;height:44px;}
-    .elvax-video-compare:fullscreen .transport button svg {width:30px;height:30px;}
-    .elvax-video-compare:fullscreen .transport button.audio-source {font-size:18px;}
-    .elvax-video-compare:fullscreen .time {font-size:14px;}
-    .elvax-video-compare:fullscreen .volume {flex-basis:84px;width:84px;}
-    .elvax-video-compare:fullscreen input[type=range] {height:5px;}
-    .elvax-video-compare:fullscreen input[type=range]::-webkit-slider-thumb {width:12px;height:12px;}
-    .elvax-video-compare:fullscreen input[type=range]::-moz-range-thumb {width:12px;height:12px;background:white;border:0;border-radius:50%;}
-    .elvax-video-compare:fullscreen input.blend[type=range] {height:100%;}
-    .elvax-video-compare:fullscreen input.blend[type=range]::-webkit-slider-thumb {width:1px;height:1px;background:transparent;}
-    .elvax-video-compare:fullscreen input.blend[type=range]::-moz-range-thumb {width:1px;height:1px;background:transparent;}
-    .elvax-video-compare:fullscreen input.blend[type=range] {background-size:100% 5px;}
-    .elvax-video-compare:fullscreen .time-seek {background-size:100% 5px !important;}
+    .elvax-video-compare-pro .generation-content {display:block;flex:1;min-height:0;overflow:auto;padding:12px;scrollbar-width:thin;scrollbar-color:#ffffff26 transparent;}
+    .elvax-video-compare-pro .generation-comparison {position:relative;margin-top:12px;overflow:hidden;border:1px solid #ffffff12;border-radius:8px;background:#13181d;}
+    .elvax-video-compare-pro .generation-comparison.has-rows.before-active {background-image:linear-gradient(to right,#39b98116 0 50%,transparent 50% 100%);}
+    .elvax-video-compare-pro .generation-comparison.has-rows.after-active {background-image:linear-gradient(to right,transparent 0 50%,#39b98116 50% 100%);}
+    .elvax-video-compare-pro .generation-comparison.has-rows::before {content:"";position:absolute;top:0;bottom:0;left:50%;width:1px;background:#ffffff24;pointer-events:none;}
+    .elvax-video-compare-pro .generation-comparison.before-active .generation-columns > :first-child,.elvax-video-compare-pro .generation-comparison.before-active .generation-value:first-child,.elvax-video-compare-pro .generation-comparison.after-active .generation-columns > :last-child,.elvax-video-compare-pro .generation-comparison.after-active .generation-value:last-child {color:#91dbb6;}
+    .elvax-video-compare-pro .generation-columns,.elvax-video-compare-pro .generation-values {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));}
+    .elvax-video-compare-pro .generation-columns {min-height:32px;padding:7px 0;box-sizing:border-box;background:#ffffff04;color:#c1ccd5;font-size:11px;letter-spacing:.01em;border-bottom:1px solid #ffffff18;}
+    .elvax-video-compare-pro .generation-columns .generation-heading {display:flex;align-items:center;font-size:inherit;font-weight:600;color:inherit;line-height:1.2;}
+    .elvax-video-compare-pro .generation-columns .generation-heading:first-child,.elvax-video-compare-pro .generation-value:first-child {padding-left:6px;padding-right:8px;}
+    .elvax-video-compare-pro .generation-columns .generation-heading:last-child,.elvax-video-compare-pro .generation-value:last-child {padding-left:8px;padding-right:6px;}
+    .elvax-video-compare-pro .generation-table {display:flex;flex-direction:column;}
+    .elvax-video-compare-pro .generation-row {min-width:0;padding:7px 0 8px;border-bottom:1px solid #ffffff14;}
+    .elvax-video-compare-pro .generation-name {width:50%;box-sizing:border-box;margin:0 0 3px;padding:0 8px 0 6px;color:#8d9aa7;font-size:10px;overflow-wrap:anywhere;}
+    .elvax-video-compare-pro .generation-value {min-width:0;overflow-wrap:anywhere;}
+    .elvax-video-compare-pro .generation-strength {color:#f2cf62;}
+    .elvax-video-compare-pro .generation-row.is-different .generation-value:last-child {color:#b9dcf3;}
+    .elvax-video-compare-pro .generation-empty {padding:12px;border:1px solid #ffffff0c;border-radius:5px;background:#ffffff03;color:#9aa6b1;}
+    .elvax-video-compare-pro .generation-controls {display:flex;align-items:center;margin-bottom:12px;color:#9da8b3;font-size:10px;}
+    .elvax-video-compare-pro .generation-controls label {display:flex;align-items:center;gap:6px;cursor:pointer;}
+    .elvax-video-compare-pro .generation-controls input {appearance:none;position:relative;flex:0 0 13px;width:13px;height:13px;margin:0;border:1px solid #65717b;border-radius:3px;background:#ffffff05;cursor:pointer;}
+    .elvax-video-compare-pro .generation-controls input:checked {border-color:#8bd4ff;background:#8bd4ff;}
+    .elvax-video-compare-pro .generation-controls input:checked::after {content:"";position:absolute;left:4px;top:1px;width:3px;height:6px;border:solid #17232c;border-width:0 1.5px 1.5px 0;transform:rotate(45deg);}
+    .elvax-video-compare-pro .generation-controls input:focus-visible {box-shadow:0 0 0 2px #8bd4ff40;}
+    .elvax-video-compare-pro .caption-label {color:#bbb;transition:color .16s ease,text-shadow .16s ease;}
+    .elvax-video-compare-pro .caption-label {flex:0 0 auto;white-space:nowrap;}
+    .elvax-video-compare-pro .caption-after {grid-area:1 / 3;display:flex;align-items:center;justify-content:flex-end;gap:6px;}
+    .elvax-video-compare-pro .caption-label.is-active {color:#00ff78;text-shadow:0 0 8px #00ff7866;}
+    .elvax-video-compare-pro .caption-label.audio-source-hover {text-decoration:underline;text-decoration-color:#8bd4ffcc;text-decoration-thickness:1px;text-underline-offset:2px;}
+    .elvax-video-compare-pro .capture-control {display:flex;align-items:center;flex:1 1 0;min-width:0;overflow:hidden;border:1px solid #666;border-radius:4px;background:#333;}
+    .elvax-video-compare-pro .capture {flex:1 1 0;min-width:0;min-height:26px;padding:5px 6px;line-height:16px;border:0;background:transparent;}
+    .elvax-video-compare-pro .capture-auto {display:flex;flex:0 0 auto;align-items:center;gap:4px;padding:0 6px;cursor:pointer;color:#c1cbd3;font-size:10px;}
+    .elvax-video-compare-pro .capture-auto input {appearance:none;position:relative;width:11px;height:11px;margin:0;border:1px solid #86939f;border-radius:3px;background:#ffffff05;cursor:pointer;}
+    .elvax-video-compare-pro .capture-auto input:checked {border-color:#8bd4ff;background:#8bd4ff;}
+    .elvax-video-compare-pro .capture-auto input:checked::after {content:"";position:absolute;left:3px;top:1px;width:3px;height:5px;border:solid #17232c;border-width:0 1.5px 1.5px 0;transform:rotate(45deg);}
+    .elvax-video-compare-pro .capture-auto input:focus-visible {box-shadow:0 0 0 2px #8bd4ff40;}
+    .elvax-video-compare-pro .capture-control:has(.capture:not(:disabled)):hover {background:#444;}
+    .elvax-video-compare-pro .capture:disabled {cursor:default;}
+    .elvax-video-compare-pro .mode-row {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));flex:0 0 auto;gap:4px;padding:2px 8px;box-sizing:border-box;border-bottom:1px solid #ffffff12;}
+    .elvax-video-compare-pro .mode-cell {position:relative;min-width:0;}
+    .elvax-video-compare-pro .mode-button {display:flex;align-items:center;justify-content:center;width:100%;height:24px;padding:1px 8px;border:1px solid transparent;border-radius:6px;background:transparent;font-size:10px;line-height:16px;color:#929eaa;transition:background .15s,color .15s,border-color .15s;}
+    .elvax-video-compare-pro .mode-button.before-after-control {gap:4px;padding-left:2px;padding-right:2px;}
+    .elvax-video-compare-pro .before-after-option {font-size:inherit;color:#929eaa;transition:color .15s;}
+    .elvax-video-compare-pro .before-after-option.is-current {color:#d6ecff;}
+    .elvax-video-compare-pro .before-after-switch {position:relative;flex:0 0 2em;width:2em;height:1.2em;box-sizing:border-box;border:0;border-radius:8em;background:#293541;box-shadow:inset 0 0 0 1px #68798a;}
+    .elvax-video-compare-pro .before-after-switch::after {content:"";position:absolute;top:50%;left:.2em;width:.8em;height:.8em;border-radius:50%;background:#d6ecff;transform:translateY(-50%);transition:transform .18s cubic-bezier(.2,.8,.2,1);}
+    .elvax-video-compare-pro .before-after-switch[data-side=after]::after {transform:translate(.8em,-50%);}
+    .elvax-video-compare-pro .before-after-switch[data-side=neutral] {background:#25282d;box-shadow:inset 0 0 0 1px #454b52;}
+    .elvax-video-compare-pro .before-after-arrows {position:absolute;left:50%;top:50%;display:none;width:1.4em;height:.9em;overflow:visible;transform:translate(-50%,-50%);}
+    .elvax-video-compare-pro .before-after-arrows path {fill:none;stroke:#9aa3ad;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+    .elvax-video-compare-pro .before-after-switch[data-side=neutral]::after {display:none;}
+    .elvax-video-compare-pro .before-after-switch[data-side=neutral] .before-after-arrows {display:block;}
+    .elvax-video-compare-pro .mode-button:hover {background:#ffffff0c;color:#eee;}
+    .elvax-video-compare-pro .mode-button[aria-pressed=true] {background:#243749;border-color:#4c6a83;color:#d6ecff;}
+    .elvax-video-compare-pro .mode-button:disabled,.elvax-video-compare-pro .mode-button:disabled:hover,.elvax-video-compare-pro .mode-button:disabled[aria-pressed=true] {background:#242629;border-color:#3b3e42;color:#747a80;opacity:.6;cursor:default;}
+    .elvax-video-compare-pro .mode-button:disabled .before-after-option {color:#747a80;}
+    .elvax-video-compare-pro .mode-button:disabled .before-after-switch {background:#292c30;box-shadow:inset 0 0 0 1px #454b52;}
+    .elvax-video-compare-pro .mode-button:disabled .before-after-switch::after {background:#81878e;}
+    .elvax-video-compare-pro .mode-button:disabled .before-after-arrows path {stroke:#747a80;}
+    .elvax-video-compare-pro .transport button {display:flex;flex:0 0 24px;align-items:center;justify-content:center;width:24px;height:24px;padding:3px;background:transparent;border:0;border-radius:4px;}
+    .elvax-video-compare-pro .transport button:hover {background:#ffffff24;}
+    .elvax-video-compare-pro .transport button.audio-source {background:#8bd4ff16;box-shadow:inset 0 0 0 1px #8bd4ff40;color:#8bd4ff;font-size:11px;font-weight:600;}
+    .elvax-video-compare-pro .transport button.audio-source:disabled {cursor:default;}
+    .elvax-video-compare-pro .audio-control {display:flex;align-items:center;flex:0 0 auto;border:1px solid #8bd4ff40;border-radius:4px;background:#8bd4ff0b;}
+    .elvax-video-compare-pro .audio-control button.audio-source {background:transparent;box-shadow:none;}
+    .elvax-video-compare-pro .audio-control .capture-auto {padding:0 5px;}
+    .elvax-video-compare-pro:fullscreen .audio-control .capture-auto {font-size:14px;}
+    .elvax-video-compare-pro .transport {gap:4px;padding:4px 6px;}
+    .elvax-video-compare-pro .time {flex:0 0 auto;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:11px;}
+    .elvax-video-compare-pro .volume {flex:0 1 42px;width:42px;min-width:14px;}
+    .elvax-video-compare-pro input[type=range] {appearance:none;height:3px;margin:0;background:#888;cursor:pointer;min-width:0;}
+    .elvax-video-compare-pro input[type=range]::-webkit-slider-thumb {appearance:none;width:9px;height:9px;background:white;border-radius:50%;}
+    .elvax-video-compare-pro .blend-control {grid-area:1 / 2;position:relative;justify-self:center;width:100%;max-width:200px;min-width:0;height:15px;box-sizing:border-box;}
+    .elvax-video-compare-pro .blend-control::before {content:"";position:absolute;inset:0;border-radius:2px;background:linear-gradient(90deg,#8faabb26 var(--blend-fill,50%),#ffffff04 var(--blend-fill,50%));box-shadow:inset 0 -1px #ffffff18;transition:filter .15s;pointer-events:none;}
+    .elvax-video-compare-pro .blend-control::after {content:"";position:absolute;left:clamp(1px,var(--blend-fill,50%),calc(100% - 1px));top:4px;bottom:4px;width:1px;background:#b7cbd8;opacity:0;pointer-events:none;transition:opacity .15s;}
+    .elvax-video-compare-pro .blend-control:hover::before,.elvax-video-compare-pro .blend-control:focus-within::before {filter:brightness(1.4);}
+    .elvax-video-compare-pro .blend-control:hover::after,.elvax-video-compare-pro .blend-control:focus-within::after {opacity:1;}
+    .elvax-video-compare-pro input.blend[type=range] {position:absolute;inset:0;z-index:1;width:100%;height:100%;min-width:0;margin:0;background:transparent;cursor:ew-resize;touch-action:none;}
+    .elvax-video-compare-pro input.blend[type=range]::-webkit-slider-thumb {width:1px;height:1px;background:transparent;box-shadow:none;}
+    .elvax-video-compare-pro input.blend[type=range]::-moz-range-thumb {width:1px;height:1px;border:0;background:transparent;}
+    .elvax-video-compare-pro .blend-value {position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;color:#b8c6d0;font-size:9px;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap;}
+    .elvax-video-compare-pro .status:empty {display:none;}
+    .elvax-video-compare-pro:fullscreen {background:#111;padding:16px;box-sizing:border-box;--compare-gap:12px;}
+    .elvax-video-compare-pro:fullscreen .capture-row {display:none;}
+    .elvax-video-compare-pro:fullscreen .mode-row {padding:8px;gap:6px;}
+    .elvax-video-compare-pro:fullscreen .mode-row {width:100%;align-self:stretch;padding:8px max(8px,calc((100% - 960px)/2 + 8px));box-sizing:border-box;}
+    .elvax-video-compare-pro:fullscreen .mode-button {height:40px;padding:4px;font-size:clamp(16px,1.25vw,22px);line-height:1;}
+    .elvax-video-compare-pro:fullscreen .captions {--caption-inset:12px;font-size:clamp(16px,1.4vw,24px);line-height:1.4;padding-top:10px;padding-bottom:10px;}
+    .elvax-video-compare-pro:fullscreen .generation-panel {font-size:clamp(11px,.75vw,14px);}
+    .elvax-video-compare-pro:fullscreen .generation-open .media-row {grid-template-columns:minmax(0,1fr) 6px minmax(0,var(--generation-fullscreen-width,33.333333%));}
+    .elvax-video-compare-pro:fullscreen .generation-header {height:57px;min-height:57px;padding:4px 12px;}
+    .elvax-video-compare-pro:fullscreen .generation-header .generation-heading {font-size:clamp(15px,1vw,20px);}
+    .elvax-video-compare-pro:fullscreen .generation-count {padding:4px 8px;font-size:clamp(12px,.75vw,16px);}
+    .elvax-video-compare-pro:fullscreen .generation-controls {margin-bottom:16px;font-size:clamp(14px,.9vw,18px);}
+    .elvax-video-compare-pro:fullscreen .generation-controls label {gap:10px;}
+    .elvax-video-compare-pro:fullscreen .generation-controls input {flex-basis:18px;width:18px;height:18px;}
+    .elvax-video-compare-pro:fullscreen .generation-controls input:checked::after {left:5px;top:2px;width:5px;height:8px;}
+    .elvax-video-compare-pro:fullscreen .generation-toggle {flex-basis:48px;width:48px;height:48px;padding:8px;}
+    .elvax-video-compare-pro:fullscreen .generation-icon {width:28px;height:28px;flex-basis:28px;}
+    .elvax-video-compare-pro:fullscreen .generation-content {padding:12px;}
+    .elvax-video-compare-pro:fullscreen .media-row {width:100%;}
+    .elvax-video-compare-pro:fullscreen .blend-value {font-size:clamp(13px,1vw,16px);}
+    .elvax-video-compare-pro:fullscreen .blend-control {height:30px;max-width:240px;}
+    .elvax-video-compare-pro:fullscreen .video-panel,.elvax-video-compare-pro:fullscreen .status {width:100%;}
+    .elvax-video-compare-pro:fullscreen .transport {gap:4px;padding:8px 6px;}
+    .elvax-video-compare-pro:fullscreen .transport button {flex-basis:36px;width:36px;height:44px;}
+    .elvax-video-compare-pro:fullscreen .transport button svg {width:30px;height:30px;}
+    .elvax-video-compare-pro:fullscreen .transport button.audio-source {font-size:18px;}
+    .elvax-video-compare-pro:fullscreen .time {font-size:14px;}
+    .elvax-video-compare-pro:fullscreen .volume {flex-basis:84px;width:84px;}
+    .elvax-video-compare-pro:fullscreen input[type=range] {height:5px;}
+    .elvax-video-compare-pro:fullscreen input[type=range]::-webkit-slider-thumb {width:12px;height:12px;}
+    .elvax-video-compare-pro:fullscreen input[type=range]::-moz-range-thumb {width:12px;height:12px;background:white;border:0;border-radius:50%;}
+    .elvax-video-compare-pro:fullscreen input.blend[type=range] {height:100%;}
+    .elvax-video-compare-pro:fullscreen input.blend[type=range]::-webkit-slider-thumb {width:1px;height:1px;background:transparent;}
+    .elvax-video-compare-pro:fullscreen input.blend[type=range]::-moz-range-thumb {width:1px;height:1px;background:transparent;}
+    .elvax-video-compare-pro:fullscreen input.blend[type=range] {background-size:100% 5px;}
+    .elvax-video-compare-pro:fullscreen .time-seek {background-size:100% 5px !important;}
   `;
   const buttons = document.createElement("div");
   buttons.className = "capture-row";
@@ -279,7 +296,7 @@ function install(node) {
       } else {
         state().mode = mode;
       }
-      updateView();
+      updateView(true);
       node.graph?.setDirtyCanvas(true, true);
     });
     modeButtons.set(mode, button);
@@ -312,7 +329,7 @@ function install(node) {
   blend.addEventListener("input", () => {
     state().blend = Number(blend.value);
     state().mode = "overlay";
-    updateView();
+    updateView(true);
   });
   blend.addEventListener("dblclick", (event) => {
     event.preventDefault();
@@ -320,7 +337,7 @@ function install(node) {
     if (blend.disabled) return;
     state().blend = 0.5;
     state().mode = "overlay";
-    updateView();
+    updateView(true);
   });
   const panel = document.createElement("div");
   panel.className = "video-panel";
@@ -362,7 +379,7 @@ function install(node) {
   message.className = "status";
   message.style.cssText = "flex:0 0 auto;box-sizing:border-box;padding:6px 8px;border:1px solid #ffffff24;border-radius:6px;background:#111d;text-align:center;color:#aaa;overflow-wrap:anywhere;";
   function updateStatus() {
-    message.textContent = "";
+    message.textContent = [...Object.values(uploadStatus), audioUnavailable ? "Audio unavailable. Video playback is still available." : ""].filter(Boolean).join(" · ");
   }
   const captions = document.createElement("div");
   captions.className = "captions";
@@ -425,6 +442,7 @@ function install(node) {
   mediaRow.append(captions, stage, generationResizer, generationPanel);
   let panelResize = null;
   function syncPanelWidth() {
+    cachedVideoBounds = null;
     const normal = Number.isFinite(state().generationPanelWidth) ? state().generationPanelWidth : .5;
     const fullscreen = Number.isFinite(state().generationFullscreenWidth) ? state().generationFullscreenWidth : 1 / 3;
     mediaRow.style.setProperty("--generation-panel-width", `${normal * 100}%`);
@@ -483,10 +501,32 @@ function install(node) {
     return item.name.startsWith("LoRA ") ? text.replace(/^(.+?)\s+\(([^()]*(?:strength)[^()]*)\)$/i, "($2) $1") : text;
   }
   function settingsMap(entry) {
-    return new Map((entry?.generation || []).flatMap((item) => item.name === "Seed"
-      ? item.values.map((value, index) => [`Seed ${index + 1}`, String(value)])
-      : item.name.startsWith("LoRA ") ? []
+    return new Map((entry?.generation || []).flatMap((item) => item.name === "Seed" || item.name.startsWith("LoRA ") ? []
         : [[item.name, item.values.map((value) => generationValue(item, value)).join(item.staged ? " > " : ", ")]]));
+  }
+  function seedPairs(beforeEntry, afterEntry) {
+    const read = (entry) => {
+      const item = entry.generation?.find((setting) => setting.name === "Seed");
+      return (item?.values || []).map((value, index) => ({ ...item.sources?.[index],
+        title: item.labels?.[index] || `Seed ${index + 1}`, value: String(value) }));
+    };
+    const before = read(beforeEntry);
+    const after = read(afterEntry);
+    const used = new Set();
+    const pairs = before.map((seed) => {
+      let index = seed.workflow ? after.findIndex((other, i) => !used.has(i)
+        && other.workflow === seed.workflow && other.id === seed.id && other.type === seed.type) : -1;
+      if (index < 0) {
+        const matches = after.map((other, i) => ({ other, i })).filter(({ other, i }) => !used.has(i)
+          && other.title === seed.title && other.type === seed.type
+          && !(seed.workflow && other.workflow === seed.workflow));
+        if (matches.length === 1 && before.filter((other) => other.title === seed.title && other.type === seed.type).length === 1) index = matches[0].i;
+      }
+      if (index >= 0) used.add(index);
+      return { before: seed, after: index >= 0 ? after[index] : null };
+    });
+    after.forEach((seed, i) => { if (!used.has(i)) pairs.push({ before: null, after: seed }); });
+    return pairs;
   }
   function loraSettings(entry) {
     const occurrences = new Map();
@@ -558,8 +598,8 @@ function install(node) {
       generationCount.textContent = "";
       return;
     }
-    const signature = JSON.stringify([state().before.generation, state().after.generation, showMatching.checked]);
-    if (signature === generationPanelSignature) return;
+    const signature = [state().before.generation, state().after.generation, showMatching.checked];
+    if (generationPanelSignature && signature.every((value, index) => value === generationPanelSignature[index])) return;
     generationPanelSignature = signature;
     const beforeSettings = settingsMap(state().before);
     const afterSettings = settingsMap(state().after);
@@ -568,6 +608,7 @@ function install(node) {
     const beforeLoras = new Map(loraSettings(state().before).map((item) => [item.key, item]));
     const afterLoras = new Map(loraSettings(state().after).map((item) => [item.key, item]));
     const loraNameToKey = new Map();
+    const seedNameToPair = new Map(seedPairs(state().before, state().after).map((pair, index) => [`Seed ${index + 1}`, pair]));
     for (const key of new Set([...beforeLoras.keys(), ...afterLoras.keys()])) {
       loraNameToKey.set(`LoRA ${loraNameToKey.size + 1}`, key);
     }
@@ -575,18 +616,17 @@ function install(node) {
       const index = GENERATION_ORDER.indexOf(name.replace(/^(LoRA|Seed) \d+$/, "$1"));
       return index < 0 ? GENERATION_ORDER.length : index;
     };
-    const names = [...new Set([...beforeSettings.keys(), ...afterSettings.keys(), ...loraNameToKey.keys()])]
+    const names = [...new Set([...beforeSettings.keys(), ...afterSettings.keys(), ...loraNameToKey.keys(), ...seedNameToPair.keys()])]
       .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, undefined, { numeric: true }));
     const rows = names.map((name) => {
-      const seedIndex = /^Seed (\d+)$/.exec(name);
-      const seedLabels = seedIndex ? [state().before, state().after].map((entry) =>
-        entry.generation?.find((item) => item.name === "Seed")?.labels?.[Number(seedIndex[1]) - 1]) : [];
+      const seedPair = seedNameToPair.get(name);
+      const seedLabels = seedPair ? [seedPair.before?.title, seedPair.after?.title] : [];
       const label = [...new Set(seedLabels.filter(Boolean))].join(" / ") || name;
       const loraKey = loraNameToKey.get(name);
       const beforeLora = beforeLoras.get(loraKey);
       const afterLora = afterLoras.get(loraKey);
-      const beforeValue = loraKey === undefined ? beforeSettings.get(name) : beforeLora?.text;
-      const afterValue = loraKey === undefined ? afterSettings.get(name) : afterLora?.text;
+      const beforeValue = seedPair ? seedPair.before?.value : loraKey === undefined ? beforeSettings.get(name) : beforeLora?.text;
+      const afterValue = seedPair ? seedPair.after?.value : loraKey === undefined ? afterSettings.get(name) : afterLora?.text;
       const staged = stagedNames.has(name);
       const beforeStages = beforeValue?.split(" > ") || [];
       const afterStages = afterValue?.split(" > ") || [];
@@ -702,15 +742,30 @@ function install(node) {
   audioSource.addEventListener("pointerenter", updateAudioCaptionHover);
   audioSource.addEventListener("pointerleave", updateAudioCaptionHover);
   audioSource.addEventListener("click", () => {
+    state().audioAuto = false;
+    audioAuto.checked = false;
     state().audioSource = audioVideo() === after ? "before" : "after";
-    applyAudio();
-    const selected = audioVideo();
-    if (playing && selected.hasAttribute("src") && !selected.paused && !selected.ended) {
-      playbackMaster = selected;
-      selected.playbackRate = 1;
-    }
+    applyAudio(true);
+    node.graph?.change();
   });
-  transport.append(audioSource);
+  const audioControl = document.createElement("div");
+  audioControl.className = "audio-control";
+  const audioAutoLabel = document.createElement("label");
+  audioAutoLabel.className = "capture-auto";
+  audioAutoLabel.title = "Switch audio when a side becomes fully visible. Keep that audio between endpoints.";
+  const audioAuto = document.createElement("input");
+  audioAuto.type = "checkbox";
+  audioAuto.checked = state().audioAuto;
+  audioAuto.setAttribute("aria-label", "Automatic audio switching");
+  audioAutoLabel.addEventListener("pointerdown", (event) => event.stopPropagation());
+  audioAuto.addEventListener("change", () => {
+    state().audioAuto = audioAuto.checked;
+    updateAutoAudio(true);
+    node.graph?.change();
+  });
+  audioAutoLabel.append(audioAuto, document.createTextNode("Auto"));
+  audioControl.append(audioSource, audioAutoLabel);
+  transport.append(audioControl);
   const volume = document.createElement("input");
   volume.type = "range";
   volume.min = "0";
@@ -740,25 +795,92 @@ function install(node) {
     if (!audio.error && audio.hasAttribute("src") && (!Number.isFinite(audio.duration) || target < audio.duration)) return audio;
     return !after.error && after.hasAttribute("src") && (before.error || !before.hasAttribute("src") || (after.duration || 0) > (before.duration || 0)) ? after : before;
   }
-  function applyAudio() {
+  function applyAudio(feedback = false) {
     const selected = audioVideo();
     const source = selected === after ? "after" : "before";
+    const targetVolume = Number(state().volume ?? 1);
+    if (feedback && lastAudioSource && lastAudioSource !== selected) playSwitchTick();
+    lastAudioSource = selected;
     for (const video of videos) {
-      video.muted = true;
-      video.volume = Number(state().volume ?? 1);
+      video.volume = targetVolume;
+      if (audioUnavailable) video.muted = true;
+      else if (audioContext) {
+        video.muted = false;
+        const gain = audioGains.get(video).gain;
+        const now = audioContext.currentTime;
+        gain.cancelAndHoldAtTime(now);
+        gain.linearRampToValueAtTime(video === selected && !state().muted ? 1 : 0, now + .025);
+      } else video.muted = video !== selected || Boolean(state().muted);
     }
-    selected.muted = state().muted ?? false;
-    const muted = selected.muted || selected.volume === 0;
+    const muted = audioUnavailable || Boolean(state().muted) || targetVolume === 0;
     mute.style.color = muted ? "#aaa" : "#8bd4ff";
     mute.title = `Mute / unmute ${source === "after" ? "After" : "Before"} audio`;
     mute.setAttribute("aria-label", mute.title);
     mute.querySelectorAll("path")[1].setAttribute("d", muted ? "M16 9l5 6M21 9l-5 6" : "M16 8a6 6 0 0 1 0 8M19 5a10 10 0 0 1 0 14");
     audioSource.textContent = source === "after" ? "A" : "B";
-    audioSource.disabled = !state().before || !state().after;
+    audioSource.disabled = audioUnavailable || !state().before || !state().after;
+    audioAuto.disabled = audioUnavailable;
     audioSource.title = `Audio: ${source === "after" ? "After (A)" : "Before (B)"}${audioSource.disabled ? "" : `. Click to switch to ${source === "after" ? "Before (B)" : "After (A)"}`}.`;
     audioSource.setAttribute("aria-label", audioSource.title);
     updateAudioCaptionHover();
     volume.title = `${source === "after" ? "After" : "Before"} audio volume`;
+  }
+  async function initializeAudio() {
+    if (audioUnavailable || disposed) return;
+    try {
+      if (!audioContext) {
+        audioContext = new AudioContext();
+        for (const video of videos) {
+          const gain = audioContext.createGain();
+          gain.gain.value = 0;
+          audioContext.createMediaElementSource(video).connect(gain);
+          gain.connect(audioContext.destination);
+          audioGains.set(video, gain);
+        }
+      }
+      await audioContext.resume();
+    } catch {
+      audioUnavailable = true;
+      for (const video of videos) video.muted = true;
+      updateStatus();
+    }
+  }
+  function playSwitchTick() {
+    const targetVolume = Number(state().volume ?? 1);
+    if (disposed || audioUnavailable || state().muted || targetVolume === 0) return;
+    if (!audioContext || audioContext.state !== "running") {
+      initializeAudio().then(() => { if (!disposed) playSwitchTick(); }).catch(() => {});
+      return;
+    }
+    const now = audioContext.currentTime;
+    if (now - lastTickTime < .015) return;
+    lastTickTime = now;
+    const tone = audioContext.createOscillator();
+    const envelope = audioContext.createGain();
+    tone.frequency.setValueAtTime(1800, now);
+    tone.frequency.exponentialRampToValueAtTime(900, now + .009);
+    envelope.gain.setValueAtTime(0, now);
+    envelope.gain.linearRampToValueAtTime(.012 * targetVolume, now + .001);
+    envelope.gain.exponentialRampToValueAtTime(.00001, now + .009);
+    tone.connect(envelope);
+    envelope.connect(audioContext.destination);
+    tone.onended = () => { tone.disconnect(); envelope.disconnect(); };
+    tone.start(now);
+    tone.stop(now + .010);
+  }
+  function updateAutoAudio(feedback = false) {
+    if (!state().audioAuto || !state().before || !state().after) return;
+    let source = null;
+    if (state().mode === "split") {
+      if (state().position === 100) source = "before";
+      else if (state().position === 0) source = "after";
+    } else if (state().mode === "overlay") {
+      if (state().blend === 0) source = "before";
+      else if (state().blend === 1) source = "after";
+    }
+    if (!source || source === state().audioSource) return;
+    state().audioSource = source;
+    applyAudio(feedback);
   }
   function updateAudioCaptionHover() {
     const hovered = audioSource.matches(":hover");
@@ -766,47 +888,51 @@ function install(node) {
     labels[1].classList.toggle("audio-source-hover", hovered && audioSource.textContent === "A");
   }
   function videoBounds() {
+    if (cachedVideoBounds) return cachedVideoBounds;
     const width = stage.clientWidth;
     const height = stage.clientHeight;
-    const stageRect = stage.getBoundingClientRect();
-    if (!stageRect.width || !stageRect.height) return { x: 0, y: 0, width, height };
+    if (!width || !height) return { x: 0, y: 0, width, height };
     const bounds = videos.flatMap((video, index) => {
       if (!video.hasAttribute("src") || !video.videoWidth || !video.videoHeight) return [];
-      const rect = frameSurfaces[index].getBoundingClientRect();
-      const boxWidth = rect.width * width / stageRect.width;
-      const boxHeight = rect.height * height / stageRect.height;
+      const surface = frameSurfaces[index];
+      const boxWidth = surface.clientWidth;
+      const boxHeight = surface.clientHeight;
       if (!boxWidth || !boxHeight) return [];
       const scale = Math.min(boxWidth / video.videoWidth, boxHeight / video.videoHeight);
       const contentWidth = video.videoWidth * scale;
       const contentHeight = video.videoHeight * scale;
-      return [{ x: (rect.left - stageRect.left) * width / stageRect.width + (boxWidth - contentWidth) / 2,
-        y: (rect.top - stageRect.top) * height / stageRect.height + (boxHeight - contentHeight) / 2,
+      return [{ x: surface.offsetLeft + (boxWidth - contentWidth) / 2,
+        y: surface.offsetTop + (boxHeight - contentHeight) / 2,
         width: contentWidth, height: contentHeight }];
     });
     if (!bounds.length) return { x: 0, y: 0, width, height };
     const x = Math.min(...bounds.map((rect) => rect.x));
     const y = Math.min(...bounds.map((rect) => rect.y));
-    return { x, y, width: Math.max(...bounds.map((rect) => rect.x + rect.width)) - x,
+    cachedVideoBounds = { x, y, width: Math.max(...bounds.map((rect) => rect.x + rect.width)) - x,
       height: Math.max(...bounds.map((rect) => rect.y + rect.height)) - y };
+    return cachedVideoBounds;
   }
   function syncCaptionsToVideo() {
     if (!captions.isConnected || !stage.clientWidth) return;
     const bounds = videoBounds();
-    const captionRect = captions.getBoundingClientRect();
-    const stageRect = stage.getBoundingClientRect();
-    if (!stageRect.width) return;
-    const scale = stageRect.width / stage.clientWidth;
-    const left = (stageRect.left - captionRect.left) / scale + bounds.x;
-    const right = (captionRect.right - stageRect.left) / scale - bounds.x - bounds.width;
+    const left = bounds.x;
+    const right = stage.clientWidth - bounds.x - bounds.width;
     captions.style.setProperty("--caption-left", `${Math.max(0, left)}px`);
     captions.style.setProperty("--caption-right", `${Math.max(0, right)}px`);
     captions.style.transform = `translateY(${Math.max(0, bounds.y)}px)`;
   }
-  function position(value) {
+  function position(value, feedback = false) {
     state().position = Math.max(0, Math.min(100, Number(value) || 0));
+    updateAutoAudio(feedback);
     const both = Boolean(state().before && state().after);
     labels[0].classList.toggle("is-active", both && ((state().mode === "split" && state().position === 100) || (state().mode === "overlay" && state().blend === 0)));
     labels[1].classList.toggle("is-active", both && ((state().mode === "split" && state().position === 0) || (state().mode === "overlay" && state().blend === 1)));
+    const visibleSide = labels[0].classList.contains("is-active") ? "before"
+      : labels[1].classList.contains("is-active") ? "after" : null;
+    if (visibleSide) {
+      if (feedback && lastVisibleSide && visibleSide !== lastVisibleSide) playSwitchTick();
+      lastVisibleSide = visibleSide;
+    }
     generationComparison.classList.toggle("before-active", labels[0].classList.contains("is-active"));
     generationComparison.classList.toggle("after-active", labels[1].classList.contains("is-active"));
     const bounds = videoBounds();
@@ -821,7 +947,8 @@ function install(node) {
     divider.style.opacity = hoveringVideo ? "1" : "0";
     divider.setAttribute("aria-valuenow", String(Math.round(state().position)));
   }
-  function updateView() {
+  function updateView(feedback = false) {
+    cachedVideoBounds = null;
     hoveringVideo = false;
     if (!modeButtons.has(state().mode)) state().mode = "split";
     delete state().singleView;
@@ -881,7 +1008,7 @@ function install(node) {
     labels[0].style.display = state().before ? "block" : "none";
     labels[1].style.display = state().after ? "block" : "none";
     updateGenerationPanel();
-    position(state().position ?? 50);
+    position(state().position ?? 50, feedback);
     syncCaptionsToVideo();
   }
   function updateTime() {
@@ -1015,6 +1142,7 @@ function install(node) {
       canvas.getContext("2d").drawImage(pair[index].frame, 0, 0, canvas.width, canvas.height);
     });
     if (resized) {
+      cachedVideoBounds = null;
       position(state().position ?? 50);
       syncCaptionsToVideo();
     }
@@ -1052,7 +1180,8 @@ function install(node) {
             ? Math.min(master.currentTime, video.duration)
             : master.currentTime;
         } else {
-          const rate = drift > .01 ? .95 : drift < -.01 ? 1.05 : 1;
+          const correction = video === audioVideo() ? .005 : .05;
+          const rate = drift > .01 ? 1 - correction : drift < -.01 ? 1 + correction : 1;
           if (video.playbackRate !== rate) video.playbackRate = rate;
         }
       }
@@ -1094,6 +1223,8 @@ function install(node) {
     if (!active.length) return;
     playStarting = true;
     const request = ++playRequest;
+    await initializeAudio();
+    if (request !== playRequest || disposed) return;
     await Promise.all(active.map(waitForMetadata));
     if (request !== playRequest || disposed) return;
     playStarting = false;
@@ -1211,6 +1342,7 @@ function install(node) {
     });
     video.addEventListener("loadedmetadata", () => {
       if (disposed) return;
+      cachedVideoBounds = null;
       const target = playing && playbackMaster ? playbackMaster.currentTime : state().time || 0;
       const time = Number.isFinite(video.duration) ? Math.min(target, video.duration) : target;
       if (Math.abs(video.currentTime - time) > .001) video.currentTime = time;
@@ -1274,17 +1406,17 @@ function install(node) {
     const x = (event.clientX - bounds.left) * stage.clientWidth / bounds.width;
     const y = (event.clientY - bounds.top) * stage.clientHeight / bounds.height;
     if (x < video.x || x > video.x + video.width) {
-      position(state().position >= 50 ? 100 : 0);
+      position(state().position >= 50 ? 100 : 0, true);
       hideDivider();
       return;
     }
     if (y < video.y || y > video.y + video.height) {
-      position(state().position >= 50 ? 100 : 0);
+      position(state().position >= 50 ? 100 : 0, true);
       hideDivider();
       return;
     }
     hoveringVideo = true;
-    if (video.width) position(100 * (x - video.x) / video.width);
+    if (video.width) position(100 * (x - video.x) / video.width, true);
   }
   stage.addEventListener("pointerenter", hoverDivider);
   stage.addEventListener("pointermove", hoverDivider);
@@ -1298,7 +1430,7 @@ function install(node) {
     const x = (event.clientX - bounds.left) * stage.clientWidth / bounds.width;
     const y = (event.clientY - bounds.top) * stage.clientHeight / bounds.height;
     if (y < video.y || y > video.y + video.height || x < video.x || x > video.x + video.width) {
-      position(state().position >= 50 ? 100 : 0);
+      position(state().position >= 50 ? 100 : 0, true);
     }
     hideDivider();
   });
@@ -1338,6 +1470,8 @@ function install(node) {
     const key = inputKey(node, role);
     if (!source) return;
     const request = ++captureRequests[role];
+    uploadStatus[role] = "";
+    updateStatus();
     button.__elvaxLoading = true;
     button.disabled = true;
     try {
@@ -1353,7 +1487,7 @@ function install(node) {
         entry = output;
       }
       if (!entry) throw new Error(`No video is available from the ${role === "before" ? "Before" : "After"} socket.`);
-      const response = await api.fetchApi("/elvax/video-compare/capture", {
+      const response = await api.fetchApi("/elvax/video-compare-pro/capture", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(entry),
       });
@@ -1400,27 +1534,35 @@ function install(node) {
     if (!root.contains(event.relatedTarget)) dropOverlay.style.display = "none";
   });
   async function uploadDroppedVideo(file, role) {
+    uploads.get(role)?.abort();
+    const controller = new AbortController();
+    uploads.set(role, controller);
     const request = ++captureRequests[role];
     const button = captureButtons.get(role);
     button.__elvaxLoading = true;
     button.disabled = true;
-    message.textContent = `Loading ${role === "before" ? "Before" : "After"} video…`;
+    uploadStatus[role] = `Loading ${role === "before" ? "Before" : "After"} video…`;
+    updateStatus();
     try {
       const data = new FormData();
       data.append("video", file);
-      const response = await api.fetchApi("/elvax/video-compare/upload", { method: "POST", body: data });
+      const response = await api.fetchApi("/elvax/video-compare-pro/upload", { method: "POST", body: data, signal: controller.signal });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Could not load the dropped video.");
       if (disposed || request !== captureRequests[role]) return;
       state()[role] = result;
       state().time = 0;
-      message.textContent = "";
+      uploadStatus[role] = "";
       show();
       node.graph?.change();
       node.graph?.setDirtyCanvas(true, true);
     } catch (error) {
-      if (!disposed && request === captureRequests[role]) message.textContent = error.message;
+      if (!disposed && request === captureRequests[role]) {
+        uploadStatus[role] = `${role === "before" ? "Before" : "After"}: ${error.message}`;
+        updateStatus();
+      }
     } finally {
+      if (uploads.get(role) === controller) uploads.delete(role);
       if (!disposed && request === captureRequests[role]) {
         button.__elvaxLoading = false;
         updateLoadButtons();
@@ -1489,7 +1631,7 @@ function install(node) {
     const slot = arguments[1];
     const connected = arguments[2];
     const result = oldConnectionsChanged?.apply(this, arguments);
-    if (connected && state().audioSource == null) {
+    if (connected && !state().audioAuto && state().audioSource == null) {
       state().audioSource = this.inputs?.[slot]?.name === "after_video" ? "after" : "before";
     }
     updateLoadButtons();
@@ -1545,7 +1687,7 @@ function install(node) {
   stage.append(before, frameSurfaces[0], afterClip, divider, emptyHint);
   panel.append(modes, mediaRow, transport);
   root.append(style, buttons, panel, message);
-  const widget = node.addDOMWidget("video_compare", "div", root, {
+  const widget = node.addDOMWidget("video_compare_pro", "div", root, {
     serialize: false, hideOnZoom: false, getMinHeight: () => MIN_HEIGHT,
   });
   widget.computeLayoutSize = () => ({ minHeight: MIN_HEIGHT, minWidth: 1 });
@@ -1581,6 +1723,10 @@ function install(node) {
     const isFullscreen = document.fullscreenElement === root;
     if (isFullscreen === compareWasFullscreen) return;
     compareWasFullscreen = isFullscreen;
+    cachedVideoBounds = null;
+    captions.style.removeProperty("--caption-left");
+    captions.style.removeProperty("--caption-right");
+    captions.style.transform = "";
     requestAnimationFrame(() => requestAnimationFrame(() => {
       if (disposed) return;
       syncPanelWidth();
@@ -1595,7 +1741,7 @@ function install(node) {
     const result = oldSerialized?.apply(this, arguments);
     data.properties = {
       ...data.properties,
-      elvaxVideoCompare: JSON.parse(JSON.stringify({
+      elvaxVideoComparePro: JSON.parse(JSON.stringify({
         ...state(),
         time: renderedTime ?? state().time ?? 0,
       })),
@@ -1604,12 +1750,22 @@ function install(node) {
   };
   const oldConfigured = node.onConfigure;
   node.onConfigure = function () {
+    for (const role of ["before", "after"]) {
+      ++captureRequests[role];
+      uploads.get(role)?.abort();
+      uploadStatus[role] = "";
+      captureButtons.get(role).__elvaxLoading = false;
+    }
+    uploads.clear();
+    lastVisibleSide = null;
+    lastAudioSource = null;
     const result = oldConfigured?.apply(this, arguments);
-    this.properties.elvaxVideoCompare ||= { position: 50, volume: 1, muted: false, loop: true, audioSource: null };
-    this.properties.elvaxVideoCompare = JSON.parse(JSON.stringify(this.properties.elvaxVideoCompare));
+    this.properties.elvaxVideoComparePro ||= { position: 50, volume: 1, muted: false, loop: true, audioSource: null };
+    this.properties.elvaxVideoComparePro = JSON.parse(JSON.stringify(this.properties.elvaxVideoComparePro));
     generationOpen = Boolean(state().generationOpen);
     showMatching.checked = Boolean(state().showMatching);
     migrateAudioDefault();
+    audioAuto.checked = state().audioAuto;
     updateLoadButtons();
     enforceMinimumSize();
     show();
@@ -1620,12 +1776,14 @@ function install(node) {
     const result = oldExecuted?.apply(this, arguments);
     let autoLoaded = false;
     for (const role of ["before", "after"]) {
-      const entry = data?.[`elvax_compare_${role}_video`]?.[0];
+      const entry = data?.[`elvax_compare_pro_${role}_video`]?.[0];
       if (entry) {
         state()[`${role}Latest`] = entry;
         state()[`${role}LatestKey`] = inputKey(this, role);
         if (state()[`${role}Auto`] && inputNode(this, role)) {
           ++captureRequests[role];
+          uploads.get(role)?.abort();
+          uploadStatus[role] = "";
           captureButtons.get(role).__elvaxLoading = false;
           state()[role] = entry;
           autoLoaded = true;
@@ -1643,6 +1801,9 @@ function install(node) {
   };
   const oldRemoved = node.onRemoved;
   node.onRemoved = function () {
+    for (const controller of uploads.values()) controller.abort();
+    uploads.clear();
+    if (audioContext) audioContext.close();
     disposed = true;
     api.removeEventListener(ROUTE_CHANGED, updateLoadButtons);
     document.removeEventListener("fullscreenchange", onFullscreenChange);
@@ -1661,7 +1822,7 @@ function install(node) {
 }
 
 app.registerExtension({
-  name: "Elvax.VideoCompare",
+  name: "Elvax.VideoComparePro",
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== NODE_TYPE) return;
     const oldCreated = nodeType.prototype.onNodeCreated;
