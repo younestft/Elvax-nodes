@@ -31,13 +31,16 @@ MAX_LLAMA_SEED = LLAMA_SEED_MODULUS - 1
 FLASH_ATTENTION_OPTIONS = ("auto", "on", "off")
 KV_CACHE_OPTIONS = (
     "F16 - Maximum quality",
-    "Q8_0 - Recommended",
-    "Q4_0 - Low VRAM",
-    "IQ4_NL - Low VRAM / higher quality",
+    "Q8 - High quality",
+    "IQ4 - Low VRAM (Non-linear)",
+    "Q4 - Low VRAM (Standard)",
 )
 KV_CACHE_TYPES = {
     "F16 - Maximum quality": "f16",
+    "Q8 - High quality": "q8_0",
     "Q8_0 - Recommended": "q8_0",
+    "IQ4 - Low VRAM (Non-linear)": "iq4_nl",
+    "Q4 - Low VRAM (Standard)": "q4_0",
     "Q4_0 - Low VRAM": "q4_0",
     "IQ4_NL - Low VRAM / higher quality": "iq4_nl",
 }
