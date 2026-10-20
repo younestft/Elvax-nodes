@@ -22,6 +22,8 @@ class PostProcessing:
     SEARCH_ALIASES = ["elvax", "turbo", "turbo post processing", "upscale", "upscale video", "interpolate", "interpolate video", "grain", "film grain", "rife"]
     _UPSCALE_WORKERS = 6
     _GROUP_MODES = ("full sequence", "normal (64)", "low vram (16)", "custom")
+    _ENCODER_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow")
+    _H264_PROFILES = ("auto", "baseline", "main", "high")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -55,6 +57,14 @@ class PostProcessing:
                 "custom_batch_size": ("INT", {
                     "default": 16, "min": 1, "max": 2147483647, "step": 1,
                     "tooltip": "Used only when batching_mode is custom.",
+                }),
+                "encoder_preset": (list(cls._ENCODER_PRESETS), {
+                    "default": "ultrafast",
+                    "tooltip": "H.264 encoding speed versus compression efficiency. Slower presets take longer but generally produce smaller files at the same CRF.",
+                }),
+                "h264_profile": (list(cls._H264_PROFILES), {
+                    "default": "auto",
+                    "tooltip": "H.264 profile constraints. Auto preserves the encoder's current behavior. The actual profile may be lower if the preset disables higher-profile features. Forced profiles require compression enabled and CRF above 0.",
                 }),
             },
             "optional": {
@@ -174,7 +184,8 @@ class PostProcessing:
         return images.mul(255).clamp_(0, 255).byte().cpu()
 
     @staticmethod
-    def _encode_video(path, frame_rate, batches, cancelled, timings, crf=0):
+    def _encode_video(path, frame_rate, batches, cancelled, timings, crf=0,
+                      encoder_preset="ultrafast", h264_profile="auto"):
         rate = Fraction(round(frame_rate * 1000), 1000)
         stream = None
         reformatter = VideoReformatter()
@@ -193,7 +204,10 @@ class PostProcessing:
                     stream.width = batch.shape[2]
                     stream.height = batch.shape[1]
                     stream.pix_fmt = "yuv420p"
-                    stream.options = video_encoder_options(Types.VideoCodec.H264, crf, "ultrafast")
+                    options = video_encoder_options(Types.VideoCodec.H264, crf, encoder_preset)
+                    if h264_profile != "auto":
+                        options["profile"] = h264_profile
+                    stream.options = options
                     set_video_color_properties(stream.codec_context, "sRGB")
                 for image in batch:
                     if cancelled.is_set():
@@ -217,7 +231,13 @@ class PostProcessing:
                 interpolate=True, original_fps=24.0, interpolate_by=2,
                 grain=True, grain_intensity=0.025, saturation_mix=0.25,
                 batching_mode="normal (64)", custom_batch_size=16, audio_pass=None, unique_id=None,
-                dual_pass_rife=False, compress=True, crf=18, video=None):
+                dual_pass_rife=False, compress=True, crf=18, video=None,
+                encoder_preset="ultrafast", h264_profile="auto"):
+        encoding_crf = crf if compress else 0
+        if encoding_crf == 0 and h264_profile != "auto":
+            raise ValueError(
+                "H.264 Baseline/Main/High profiles do not support this encoder's lossless mode. "
+                "Set h264_profile to auto, or enable compression with CRF above 0.")
         started = time.perf_counter()
         workflow_started = self._workflow_started
         if video is not None:
@@ -259,7 +279,8 @@ class PostProcessing:
         batches = queue.Queue(maxsize=1)
         cancelled = threading.Event()
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="elvax-video")
-        encoder = executor.submit(self._encode_video, path, fps, batches, cancelled, timings, crf if compress else 0)
+        encoder = executor.submit(self._encode_video, path, fps, batches, cancelled, timings,
+                                  encoding_crf, encoder_preset, h264_profile)
 
         def submit_batch(batch):
             while True:

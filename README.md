@@ -42,6 +42,17 @@ Upscale with Lanczos to improve quality, interpolate with RIFE 4.9 to smooth mot
 and add film grain to reduce the digital AI look, all in one fast node,
 with extra VRAM Optimizations to prevent OOM.
 
+H.264 encoding offers `encoder_preset` (speed versus compression efficiency) and
+`h264_profile` (profile constraints). Defaults remain **ultrafast** and **auto**,
+preserving existing workflows. Slower presets generally reduce file size at the
+same CRF but take longer to encode. CRF remains the quality control.
+
+Profile choices are auto, baseline, main and high. The encoder can produce a lower
+profile when the preset disables higher-profile features. Use auto for lossless
+mode (`compress` off or CRF 0); forced profiles require compression and CRF above 0.
+Use matching encoder settings for segments you intend to concatenate, since
+different stream headers can require another encoding pass.
+
 ![Turbo Post Processing](assets/turbo-post-processing.jpg)
 
 ## Dynamic Pipe In / Dynamic Pipe Out
