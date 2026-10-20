@@ -239,12 +239,16 @@ function installNode(node) {
   let colorOverlay = null;
   let jsonOverlay = null;
   let loadRequest = 0;
+  let dragState = null;
   const scrollTimers = new Set();
   let syncFrame = null;
   let layoutFrame = null;
   const pendingValueResizes = new Set();
   root.className = "elvax-prompt-template-builder";
-  root.style.cssText = "width:100%;box-sizing:border-box;padding:8px;color:var(--fg-color,#ddd);font:12px/1.4 sans-serif;";
+  root.style.cssText = "position:relative;width:100%;box-sizing:border-box;padding:8px;color:var(--fg-color,#ddd);font:12px/1.4 sans-serif;";
+  const dropMarker = document.createElement("div");
+  dropMarker.className = "elvax-prompt-template-builder__drop-marker";
+  dropMarker.hidden = true;
 
   const style = document.createElement("style");
   style.textContent = `
@@ -307,6 +311,12 @@ function installNode(node) {
     .elvax-prompt-template-builder .elvax-prompt-template-builder__wrap-toggle::before,.elvax-prompt-template-builder .elvax-prompt-template-builder__wrap-toggle::after { content:none !important; display:none !important; }
     .elvax-prompt-template-builder__actions { display:flex; justify-content:flex-end; gap:4px; }
     .elvax-prompt-template-builder__actions .elvax-prompt-template-builder__icon-button,.elvax-prompt-template-builder__fixed-name .elvax-prompt-template-builder__icon-button { display:grid; width:26px; height:26px; flex:0 0 26px; place-items:center; padding:0; border:1px solid var(--border-color,#555); border-radius:6px; background:transparent; color:var(--descrip-text,#aaa); transition:color 120ms,border-color 120ms,background-color 120ms,transform 120ms; }
+    .elvax-prompt-template-builder__drag-handle { cursor:grab !important; touch-action:none; }
+    .elvax-prompt-template-builder__drag-handle:active { cursor:grabbing !important; }
+    .elvax-prompt-template-builder__drag-handle svg { pointer-events:none; }
+    .elvax-prompt-template-builder__row-group--dragging > .elvax-prompt-template-builder__row { opacity:.68; }
+    .elvax-prompt-template-builder__drop-marker { position:absolute; z-index:2; height:4px; border-radius:4px; background:#8ab4d0; box-shadow:0 0 6px #8ab4d066; pointer-events:none; }
+    .elvax-prompt-template-builder__row-group--drop-into > .elvax-prompt-template-builder__row { outline:1px solid #8ab4d0; outline-offset:1px; border-radius:5px; }
     .elvax-prompt-template-builder__icon-button svg { width:14px; height:14px; }
     .elvax-prompt-template-builder__icon-button:hover { transform:translateY(-1px); border-color:#888 !important; background:#3b3b3b !important; color:#fff !important; }
     .elvax-prompt-template-builder__icon-button:disabled { opacity:.35; cursor:default; transform:none; }
@@ -781,7 +791,79 @@ function installNode(node) {
     if (!overlay.contains(document.activeElement)) reset.focus();
   }
 
+  function clearDragIndicators() {
+    dropMarker.hidden = true;
+    root.querySelectorAll(".elvax-prompt-template-builder__row-group--drop-into")
+      .forEach((element) => element.classList.remove("elvax-prompt-template-builder__row-group--drop-into"));
+  }
+
+  function findDragDestination(clientX, clientY) {
+    const bounds = root.getBoundingClientRect();
+    if (clientX < bounds.left || clientX > bounds.right || clientY < bounds.top || clientY > bounds.bottom) return null;
+    const scaleX = bounds.width / root.offsetWidth;
+    const scaleY = bounds.height / root.offsetHeight;
+    for (const group of root.querySelectorAll(".elvax-prompt-template-builder__row-group")) {
+      const row = group.__elvaxRow;
+      if (row.type !== "object" && row.type !== "array") continue;
+      const rect = group.firstElementChild.getBoundingClientRect();
+      if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top + 5 * scaleY && clientY <= rect.bottom - 5 * scaleY) {
+        return { fields: row.value, arrayItems: row.type === "array", insertIndex: row.value.length, marker: group, into: true };
+      }
+    }
+    let nearest = null;
+    for (const list of root.querySelectorAll(".elvax-prompt-template-builder__fields-list")) {
+      const rect = list.getBoundingClientRect();
+      if (clientX < rect.left - 12 * scaleX || clientX > rect.right) continue;
+      const groups = [...list.children].filter((group) => group.__elvaxRow);
+      for (let index = 0; index <= groups.length; index++) {
+        const next = groups[index];
+        const previous = groups[index - 1];
+        const line = (next || previous)?.firstElementChild;
+        const lineRect = line?.getBoundingClientRect();
+        const left = lineRect?.left ?? rect.left;
+        const right = line ? line.lastElementChild.getBoundingClientRect().left - 5 * scaleX : rect.right - 121 * scaleX;
+        const y = next ? previous
+          ? (previous.getBoundingClientRect().bottom + next.getBoundingClientRect().top) / 2
+          : next.getBoundingClientRect().top - 2 * scaleY
+          : previous ? previous.getBoundingClientRect().bottom + 2 * scaleY
+          : list.querySelector(".elvax-prompt-template-builder__empty").getBoundingClientRect().bottom + 2 * scaleY;
+        const distance = Math.abs(clientY - y);
+        if (distance > 18 * scaleY) continue;
+        if (nearest && (distance > nearest.distance + scaleY || Math.abs(distance - nearest.distance) <= scaleY && left <= nearest.left)) continue;
+        nearest = { fields: list.__elvaxFields, arrayItems: list.__elvaxArrayItems, insertIndex: index, marker: next || previous || list, distance, left, right, y };
+      }
+    }
+    return nearest;
+  }
+
+  function showDropMarker(destination) {
+    const bounds = root.getBoundingClientRect();
+    const scaleX = bounds.width / root.offsetWidth;
+    const scaleY = bounds.height / root.offsetHeight;
+    dropMarker.style.left = `${(destination.left - bounds.left) / scaleX}px`;
+    dropMarker.style.top = `${(destination.y - bounds.top) / scaleY - 2}px`;
+    dropMarker.style.width = `${(destination.right - destination.left) / scaleX}px`;
+    dropMarker.hidden = false;
+  }
+
+  function nextObjectKey(fields, base) {
+    const names = new Set(fields.map((field) => String(field.key ?? "").trim()));
+    if (base === "item") {
+      for (let index = 1; ; index++) if (!names.has(`item_${index}`)) return `item_${index}`;
+    }
+    if (!names.has(base)) return base;
+    for (let index = 2; ; index++) if (!names.has(`${base}_${index}`)) return `${base}_${index}`;
+  }
+
+  function rowContainsList(row, list) {
+    if (row.type !== "object" && row.type !== "array") return false;
+    return row.value === list || row.value.some((child) => rowContainsList(child, list));
+  }
+
   function renderFields(target, fields, arrayItems = false, showHeader = false, inheritedHidden = false) {
+    target.classList.add("elvax-prompt-template-builder__fields-list");
+    target.__elvaxFields = fields;
+    target.__elvaxArrayItems = arrayItems;
     target.replaceChildren();
     if (showHeader) {
       const header = document.createElement("div");
@@ -963,26 +1045,78 @@ function installNode(node) {
 
       const actions = document.createElement("div");
       actions.className = "elvax-prompt-template-builder__actions";
-      const move = (label, icon, delta, disabled) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "elvax-prompt-template-builder__icon-button";
-        button.innerHTML = icon;
-        button.disabled = disabled;
-        button.title = label === "↑" ? "Move up" : "Move down";
-        button.setAttribute("aria-label", button.title);
-        button.addEventListener("click", () => {
-          const targetIndex = index + delta;
-          [fields[index], fields[targetIndex]] = [fields[targetIndex], fields[index]];
-          sync();
-          render();
-        });
-        return button;
+      const dragHandle = document.createElement("button");
+      dragHandle.type = "button";
+      dragHandle.className = "elvax-prompt-template-builder__icon-button elvax-prompt-template-builder__drag-handle";
+      dragHandle.innerHTML = makeIcon('<path d="M4 6h16M4 12h16M4 18h16"/>');
+      dragHandle.title = "Drag to reorder field";
+      dragHandle.setAttribute("aria-label", dragHandle.title);
+      dragHandle.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        dragHandle.setPointerCapture(event.pointerId);
+        dragState = { sourceFields: fields, sourceArrayItems: arrayItems, row, source: target, destination: null, marker: null, insertIndex: index, pointerId: event.pointerId, x: event.clientX, y: event.clientY, started: false };
+      });
+      dragHandle.addEventListener("pointermove", (event) => {
+        const state = dragState;
+        if (!state || state.pointerId !== event.pointerId) return;
+        if (!state.started && Math.hypot(event.clientX - state.x, event.clientY - state.y) < 4) return;
+        state.started = true;
+        state.source.classList.add("elvax-prompt-template-builder__row-group--dragging");
+        clearDragIndicators();
+        const destination = findDragDestination(event.clientX, event.clientY);
+        if (!destination || rowContainsList(state.row, destination.fields)) {
+          state.destination = null;
+          state.marker = null;
+          return;
+        }
+        const sourceIndex = state.sourceFields.indexOf(state.row);
+        const adjustedIndex = destination.insertIndex - (sourceIndex < destination.insertIndex ? 1 : 0);
+        const noChange = destination.fields === state.sourceFields && sourceIndex === adjustedIndex;
+        if (noChange) {
+          clearDragIndicators();
+          state.destination = null;
+          state.marker = null;
+          return;
+        }
+        if (destination.into) {
+          destination.marker.classList.add("elvax-prompt-template-builder__row-group--drop-into");
+        } else showDropMarker(destination);
+        state.destination = destination;
+        state.marker = destination.marker;
+        state.insertIndex = destination.insertIndex;
+      });
+      const finishDrag = (event, drop) => {
+        const state = dragState;
+        if (!state || state.pointerId !== event.pointerId) return;
+        state.source.classList.remove("elvax-prompt-template-builder__row-group--dragging");
+        clearDragIndicators();
+        dragState = null;
+        if (!drop || !state.started || !state.destination || !state.marker) return;
+        const from = state.sourceFields.indexOf(state.row);
+        let to = state.insertIndex;
+        if (state.destination.fields === state.sourceFields && from < to) to--;
+        if (state.destination.fields === state.sourceFields && from === to) return;
+        state.sourceFields.splice(from, 1);
+        let moved = state.row;
+        if (state.sourceArrayItems !== state.destination.arrayItems) {
+          if (state.destination.arrayItems) {
+            moved = { type: "object", value: [state.row], expanded: false, hidden: false, color: "" };
+          } else {
+            moved = { ...state.row, key: nextObjectKey(state.destination.fields, "item") };
+          }
+        } else if (!state.destination.arrayItems) {
+          moved.key = nextObjectKey(state.destination.fields, String(moved.key ?? "").trim());
+        }
+        state.destination.fields.splice(Math.max(0, Math.min(to, state.destination.fields.length)), 0, moved);
+        sync();
+        render();
       };
-      actions.append(
-        move("↑", makeIcon('<path d="m7 14 5-5 5 5"/>'), -1, index === 0),
-        move("↓", makeIcon('<path d="m7 10 5 5 5-5"/>'), 1, index === fields.length - 1),
-      );
+      dragHandle.addEventListener("pointerup", (event) => finishDrag(event, true));
+      dragHandle.addEventListener("pointercancel", (event) => finishDrag(event, false));
+      dragHandle.addEventListener("lostpointercapture", (event) => finishDrag(event, false));
+      actions.append(dragHandle);
       const color = document.createElement("button");
       color.type = "button";
       color.className = "elvax-prompt-template-builder__icon-button";
@@ -1024,7 +1158,7 @@ function installNode(node) {
 
       if ((row.type === "object" || row.type === "array") && row.expanded) {
         const nested = document.createElement("div");
-        nested.className = "elvax-prompt-template-builder__nested";
+        nested.className = "elvax-prompt-template-builder__nested elvax-prompt-template-builder__fields-list";
         const nestedFields = row.value;
         renderFields(nested, nestedFields, row.type === "array", false, rowHidden);
         const addChild = document.createElement("button");
@@ -1045,6 +1179,8 @@ function installNode(node) {
     }
     fields.forEach((row, index) => {
       const group = document.createElement("div");
+      group.className = "elvax-prompt-template-builder__row-group";
+      group.__elvaxRow = row;
       target.append(group);
       renderRow(group, row, index);
     });
@@ -1230,7 +1366,7 @@ function installNode(node) {
     event.preventDefault();
     app.canvas._mousewheel_callback(event);
   }, { capture: true, passive: false });
-  root.append(fixedControls, list, toolbar);
+  root.append(fixedControls, list, toolbar, dropMarker);
 
   dataWidget.serializeValue = serializeBuilderState;
   dataWidget.hidden = true;
