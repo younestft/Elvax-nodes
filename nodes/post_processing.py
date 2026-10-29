@@ -22,6 +22,11 @@ class PostProcessing:
     SEARCH_ALIASES = ["elvax", "turbo", "turbo post processing", "upscale", "upscale video", "interpolate", "interpolate video", "grain", "film grain", "rife"]
     _UPSCALE_WORKERS = 6
     _GROUP_MODES = ("full sequence", "normal (64)", "low vram (16)", "custom")
+    _ENCODING_SPEEDS = {
+        "Ultrafast - Fastest, largest file": "ultrafast",
+        "Fast - Moderate speed and file size": "fast",
+        "Very slow - Slowest, smallest file": "veryslow",
+    }
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -47,6 +52,10 @@ class PostProcessing:
                 "crf": ("INT", {
                     "default": 18, "min": 0, "max": 51, "step": 1,
                     "tooltip": "Lower values preserve more detail and produce larger files.",
+                }),
+                "encoding_speed": (list(cls._ENCODING_SPEEDS), {
+                    "default": "Ultrafast - Fastest, largest file",
+                    "tooltip": "Slower encoding generally produces smaller files at the same CRF. Also applies when compression is off.",
                 }),
                 "batching_mode": (list(cls._GROUP_MODES), {
                     "default": "normal (64)",
@@ -174,7 +183,7 @@ class PostProcessing:
         return images.mul(255).clamp_(0, 255).byte().cpu()
 
     @staticmethod
-    def _encode_video(path, frame_rate, batches, cancelled, timings, crf=0):
+    def _encode_video(path, frame_rate, batches, cancelled, timings, crf=0, preset="ultrafast"):
         rate = Fraction(round(frame_rate * 1000), 1000)
         stream = None
         reformatter = VideoReformatter()
@@ -193,7 +202,7 @@ class PostProcessing:
                     stream.width = batch.shape[2]
                     stream.height = batch.shape[1]
                     stream.pix_fmt = "yuv420p"
-                    stream.options = video_encoder_options(Types.VideoCodec.H264, crf, "ultrafast")
+                    stream.options = video_encoder_options(Types.VideoCodec.H264, crf, preset)
                     set_video_color_properties(stream.codec_context, "sRGB")
                 for image in batch:
                     if cancelled.is_set():
@@ -217,7 +226,8 @@ class PostProcessing:
                 interpolate=True, original_fps=24.0, interpolate_by=2,
                 grain=True, grain_intensity=0.025, saturation_mix=0.25,
                 batching_mode="normal (64)", custom_batch_size=16, audio_pass=None, unique_id=None,
-                dual_pass_rife=False, compress=True, crf=18, video=None):
+                dual_pass_rife=False, compress=True, crf=18, video=None,
+                encoding_speed="Ultrafast - Fastest, largest file"):
         started = time.perf_counter()
         workflow_started = self._workflow_started
         if video is not None:
@@ -259,7 +269,8 @@ class PostProcessing:
         batches = queue.Queue(maxsize=1)
         cancelled = threading.Event()
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="elvax-video")
-        encoder = executor.submit(self._encode_video, path, fps, batches, cancelled, timings, crf if compress else 0)
+        encoder = executor.submit(self._encode_video, path, fps, batches, cancelled, timings,
+                                  crf if compress else 0, self._ENCODING_SPEEDS[encoding_speed])
 
         def submit_batch(batch):
             while True:

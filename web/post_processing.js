@@ -82,6 +82,20 @@ app.registerExtension({
     const refresh = () => node.graph?.setDirtyCanvas(true, true);
     labelAudioInput(node);
     hideFixedWidget(node, "upscale_method", "lanczos");
+    const minimumWidth = node.size[0];
+    const computeSize = node.computeSize;
+    node.computeSize = function (...args) {
+      const size = computeSize.apply(this, args);
+      size[0] = Math.max(size[0], minimumWidth);
+      return size;
+    };
+    const onResize = node.onResize;
+    node.onResize = function (size, ...args) {
+      size[0] = Math.max(size[0], minimumWidth);
+      return onResize?.call(this, size, ...args);
+    };
+    node.min_size = [minimumWidth, node.min_size?.[1] || 0];
+    node.setSize([minimumWidth + 30, node.computeSize()[1]]);
     installToggle(node, "upscale", "UPSCALE (lanczos)", ["upscale_by"], refresh);
     installToggle(node, "interpolate", "INTERPOLATE (rife49)", ["interpolate_by", "dual_pass_rife"], refresh);
     installToggle(node, "grain", "FILM GRAIN", ["grain_intensity", "saturation_mix"], refresh);
