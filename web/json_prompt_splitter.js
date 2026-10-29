@@ -26,30 +26,35 @@ function setName(node) {
   return String(widgetValue(node, "Constant") ?? "").trim();
 }
 
-function builderForSource(node, visited = new Set()) {
-  if (!node || visited.has(node)) return null;
+function buildersForSource(node, visited = new Set(), found = new Set()) {
+  if (!node || visited.has(node)) return found;
   visited.add(node);
-  if (isNode(node, BUILDER_TYPE)) return node;
-
-  if (node.type === "Reroute" || node.comfyClass === "Reroute") {
-    return builderForSource(node.graph?.getNodeById(node.graph?.links?.[node.inputs?.[0]?.link]?.origin_id), visited);
-  }
+  if (isNode(node, BUILDER_TYPE)) { found.add(node); return found; }
 
   if (node.type === "GetNode" || node.comfyClass === "GetNode") {
     const name = setName(node);
     const setter = (node.graph?._nodes || []).find((candidate) =>
       (candidate.type === "SetNode" || candidate.comfyClass === "SetNode") && setName(candidate) === name,
     );
-    return builderForSource(linkSource(setter, setter?.inputs?.[0]), visited);
+    buildersForSource(linkSource(setter, setter?.inputs?.[0]), visited, found);
+    return found;
   }
-  return null;
+  for (const input of node.inputs || []) buildersForSource(linkSource(node, input), visited, found);
+  return found;
 }
 
 function sourceVideoCount(node) {
   const input = node.inputs?.find((item) => item.name === "json_string");
-  const linkedBuilder = builderForSource(linkSource(node, input));
+  const linkedBuilders = [...buildersForSource(linkSource(node, input))];
   const builders = (node.graph?._nodes || []).filter((candidate) => isNode(candidate, BUILDER_TYPE));
-  const builder = linkedBuilder || (builders.length === 1 ? builders[0] : null);
+  const builder = linkedBuilders.length === 1 ? linkedBuilders[0] : linkedBuilders.length === 0 && builders.length === 1 ? builders[0] : null;
+  const stateWidget = builder?.widgets?.find((widget) => widget.name === "fields_json");
+  if (stateWidget) {
+    try {
+      const state = JSON.parse(stateWidget.serializeValue?.() ?? stateWidget.value ?? "{}");
+      if (state.fixedEnabled?.video_count === false) return -1;
+    } catch { /* Keep the existing count when saved state is unavailable. */ }
+  }
   const raw = widgetValue(builder, "video_count");
   if (raw == null || String(raw).trim() === "") return null;
   const value = Number(raw);
@@ -87,6 +92,7 @@ function syncStageGroups(node, count) {
     restoreStageModes(node);
     return;
   }
+  if (count === -1) { restoreStageModes(node); return; }
   if (count === null) return;
 
   for (const target of node.graph._nodes) target.updateArea();
@@ -136,7 +142,7 @@ function syncOutputs(node) {
   if (!node.graph || configuringGraph) return;
   const previousOutputCount = node.outputs.length;
   const count = sourceVideoCount(node);
-  if (count !== null || !node.__elvaxJSONPromptSplitterConfigured) {
+  if (count !== -1 && (count !== null || !node.__elvaxJSONPromptSplitterConfigured)) {
     const outputCount = count ?? 0;
     while (node.outputs.length > outputCount) {
       if (node.outputs.at(-1)?.links?.length) break;

@@ -6,16 +6,23 @@ from that GPL-3.0 project; see the attribution below and the pack LICENSE.
 """
 
 import logging
+import math
+import json
+import os
 import re
 import sys
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
+from threading import Lock
 
 import comfy.model_management
 import comfy.patcher_extension
 import folder_paths
 import latent_preview
 import nodes
+import node_helpers
+from server import PromptServer
 from comfy_api.latest import InputImpl, Types, io
 from comfy_execution.graph_utils import ExecutionBlocker
 from comfy_extras.nodes_audio import vae_decode_audio
@@ -24,8 +31,7 @@ from comfy_extras.nodes_custom_sampler import (
     Noise_RandomNoise,
     SamplerCustomAdvanced,
 )
-from comfy_extras.nodes_minimax_h3 import MiniMaxH3ReferenceToVideo
-from comfy_extras.nodes_video import save_video_preview
+from comfy_extras.nodes_minimax_h3 import MiniMaxH3ReferenceToVideo, _resize, _encode_ref_audio, _empty_av_latent, adapt_canvas, temporal_shape
 
 from .h3_extension_sampler import (
     H3ExtensionBridge,
@@ -39,6 +45,7 @@ from .h3_extension_sampler import (
 H3_PROMPT_REFERENCES = io.Custom("H3_PROMPT_REFERENCES")
 H3_CHAIN_SETTINGS = io.Custom("ELVAX_H3_CHAIN_SETTINGS")
 H3_SAMPLER_SETTINGS = io.Custom("ELVAX_H3_SAMPLER_SETTINGS")
+H3_PREPARED = io.Custom("ELVAX_H3_PREPARED")
 
 PICTURE_NAMES = [f"<Picture {index}>" for index in range(1, 10)]
 VIDEO_NAMES = [f"<Video {index}>" for index in range(1, 4)]
@@ -47,6 +54,51 @@ MIN_H3_FRAMES = 5
 MAX_H3_FRAMES = 362
 H3_FPS = 24
 H3_FRAME_STEP = 17
+
+
+def _share_h3_references(data):
+    prompt = data.get("prompt", {})
+    groups = {}
+    for node in list(prompt.values()):
+        if node.get("class_type") != "ElvaxH3StageSettings":
+            continue
+        inputs = node["inputs"]
+        if all(isinstance(inputs.get(key), list) and inputs[key][0] in prompt for key in ("prepared_base", "prepared_video")):
+            continue
+        if not all(isinstance(inputs.get(key), list) and len(inputs[key]) == 2 for key in ("chain_settings", "references")):
+            continue
+        key = json.dumps([inputs["chain_settings"], inputs["references"]])
+        groups.setdefault(key, []).append(inputs)
+    index = 0
+
+    def add(inputs):
+        nonlocal index
+        while f"elvax_h3_refs_{index}" in prompt:
+            index += 1
+        node_id = f"elvax_h3_refs_{index}"
+        index += 1
+        prompt[node_id] = {"class_type": "ElvaxH3PrepareReferences", "inputs": inputs}
+        return [node_id, 0]
+
+    for stages in groups.values():
+        if len(stages) < 2:
+            continue
+        first = stages[0]
+        common = {key: first[key] for key in ("chain_settings", "references")}
+        base = add({**common, "part": "base", "duration_s": 0})
+        variants = {}
+        for inputs in stages:
+            duration = inputs.get("duration_s", 124 / H3_FPS)
+            effective = _duration_to_h3_frames(duration) if isinstance(duration, (int, float)) else duration
+            key = json.dumps(effective)
+            if key not in variants:
+                variants[key] = add({**common, "part": "video", "duration_s": duration, "base": base})
+            inputs["prepared_base"] = base
+            inputs["prepared_video"] = variants[key]
+    return data
+
+
+PromptServer.instance.add_on_prompt_handler(_share_h3_references)
 
 
 def _duration_to_h3_frames(duration_s):
@@ -179,7 +231,7 @@ def _native_reference_inputs(references):
 
 def _build_reference_conditioning(
     clip, references, prompt, width, height, length, ref_image_size,
-    video_vae, audio_vae,
+    video_vae, audio_vae, prepared=None,
 ):
     ref_inputs, token_map = _native_reference_inputs(references)
     prompt_tags = set(re.findall(r"<(Picture|Video|Audio) (\d+)>", prompt))
@@ -194,6 +246,14 @@ def _build_reference_conditioning(
         lambda match: token_map.get(match.group(0), match.group(0)),
         prompt,
     )
+    if prepared is not None:
+        base, videos = prepared
+        items = base["images"] + videos["items"] + base["audio_items"]
+        blocks = base["blocks"] + videos["blocks"] + base["audio_blocks"]
+        cond = clip.encode_from_tokens_scheduled(clip.tokenize(prompt, minimax_ref_items=items))
+        if blocks:
+            cond = node_helpers.conditioning_set_values(cond, {"minimax_refs": blocks})
+        return cond, _empty_av_latent(width, height, length)[0]
     result = MiniMaxH3ReferenceToVideo.execute(
         clip=clip,
         prompt=prompt,
@@ -206,6 +266,65 @@ def _build_reference_conditioning(
         **ref_inputs,
     )
     return result.result
+
+
+class H3PrepareReferences(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(node_id="ElvaxH3PrepareReferences", display_name="H3 Reference Preparation (internal)",
+            category="Elvax/internal", search_aliases=["elvax"], inputs=[
+                H3_CHAIN_SETTINGS.Input("chain_settings"), H3_PROMPT_REFERENCES.Input("references"),
+                io.Combo.Input("part", options=["base", "video"]),
+                io.Float.Input("duration_s", default=124 / H3_FPS),
+                H3_PREPARED.Input("base", optional=True),
+            ], outputs=[H3_PREPARED.Output("prepared")])
+
+    @classmethod
+    def execute(cls, chain_settings, references, part, duration_s, base=None):
+        chain = chain_settings["chain"]
+        inputs, _ = _native_reference_inputs(references)
+        vae, audio_vae = chain["video_vae"], chain["audio_vae"]
+        if part == "base":
+            images, blocks, audio_items, audio_blocks, soundtracks = [], [], [], [], {}
+            for image in inputs["ref_images"].values():
+                h, w = image.shape[1:3]
+                scale = min(1.0, math.sqrt(chain["width"] * chain["height"] / (w * h))) if chain["ref_image_size"] == "match" else min(1.0, 2048 / min(w, h))
+                tw, th = max(32, round(w * scale / 32) * 32), max(32, round(h * scale / 32) * 32)
+                resized = _resize(image[:1], tw, th, "disabled")
+                images.append({"type": "image", "data": resized})
+                blocks.append({"kind": "image", "latent_h": th // 16, "latent_w": tw // 16, "latent": vae.encode(resized)})
+            for name, audio in inputs["ref_video_audios"].items():
+                soundtracks[name] = _encode_ref_audio(audio_vae, audio)
+            for audio in inputs["ref_audios"].values():
+                z, count = _encode_ref_audio(audio_vae, audio)
+                audio_items.append({"type": "audio"})
+                audio_blocks.append({"kind": "audio", "ref_audio_t": count, "audio_latent": z})
+            return io.NodeOutput({"images": images, "blocks": blocks, "audio_items": audio_items,
+                                  "audio_blocks": audio_blocks, "soundtracks": soundtracks})
+        items, blocks = [], []
+        frame_count = temporal_shape(_duration_to_h3_frames(duration_s))[0]
+        for name, video in inputs["ref_videos"].items():
+            vh, vw = video.shape[1:3]
+            cw, ch = adapt_canvas(vw, vh)
+            if vw * vh < cw * ch:
+                cw, ch = max(32, round(vw / 32) * 32), max(32, round(vh / 32) * 32)
+            frames = _resize(video, cw, ch, "disabled")[:frame_count]
+            n = frames.shape[0]
+            if n < 5:
+                raise ValueError("MiniMax H3 reference videos need at least 5 frames (~0.2s at 24 fps)")
+            n -= (n - 5) % 17
+            frames = frames[:n]
+            soundtrack = base["soundtracks"].get("ref_video_audio_" + name.rsplit("_", 1)[-1])
+            if soundtrack is not None:
+                items.append({"type": "audio"})
+            indices = list(range(0, n, H3_FPS // 2))
+            items.append({"type": "video", "data": frames[indices], "timestamps": [i / 2.0 for i in range(len(indices))]})
+            z = vae.encode(frames)
+            audio_latent, ref_audio_t = soundtrack if soundtrack is not None else (None, 0)
+            blocks.append({"kind": "video_audio" if ref_audio_t else "video", "latent_t": z.shape[2],
+                           "latent_h": ch // 16, "latent_w": cw // 16, "ref_audio_t": ref_audio_t,
+                           "latent": z, "audio_latent": audio_latent})
+        return io.NodeOutput({"items": items, "blocks": blocks})
 
 
 def _sample(model, conditioning, latent, seed, sampler, sigmas):
@@ -394,6 +513,8 @@ class H3StageSettings(io.ComfyNode):
                     "model",
                     tooltip="You can connect this stage's custom Loras here"),
                 H3_PROMPT_REFERENCES.Input("references", optional=True),
+                H3_PREPARED.Input("prepared_base", optional=True),
+                H3_PREPARED.Input("prepared_video", optional=True),
                 io.String.Input("prompt", multiline=True, dynamic_prompts=True),
                 io.Int.Input(
                     "seed", default=0, min=0, max=0xffffffffffffffff,
@@ -429,7 +550,7 @@ class H3StageSettings(io.ComfyNode):
     @classmethod
     def execute(cls, chain_settings, model, prompt, seed, duration_s,
                 transition_mode, video_context_length, audio_context_length,
-                references=None):
+                references=None, prepared_base=None, prepared_video=None):
         if (not isinstance(chain_settings, dict)
                 or chain_settings.get("version") != 1
                 or "chain" not in chain_settings):
@@ -442,6 +563,7 @@ class H3StageSettings(io.ComfyNode):
             "stage": {
                 "model": model,
                 "references": references,
+                "prepared": (prepared_base, prepared_video) if prepared_base is not None and prepared_video is not None else None,
                 "prompt": prompt,
                 "seed": int(seed),
                 "duration_s": float(duration_s),
@@ -466,7 +588,7 @@ def _sample_h3_stage(sampler_settings, previous_latent):
     conditioning, base_latent = _build_reference_conditioning(
         chain["clip"], stage["references"], stage["prompt"],
         chain["width"], chain["height"], duration_frames,
-        chain["ref_image_size"], chain["video_vae"], chain["audio_vae"])
+        chain["ref_image_size"], chain["video_vae"], chain["audio_vae"], stage.get("prepared"))
 
     trim_frames = 0
     if previous_latent is None:
@@ -524,8 +646,10 @@ class _H3LivePreview:
             decoder = None
         client_id = preview.PromptServer.instance.client_id
         pending = None
+        revision = 0
+        revision_lock = Lock()
 
-        def encode_frames(frames):
+        def encode_frames(frames, frame_revision):
             try:
                 frames = preview._materialize_frames(frames, 1024)
                 if not frames:
@@ -538,23 +662,22 @@ class _H3LivePreview:
                     image, width, height = preview._encode_animated_webp(frames, 12, 80, 1024)
                     mime = "image/webp"
                 if image:
-                    preview.PromptServer.instance.send_sync(
-                        "kj_preview_override",
-                        {"node_id": self.node_id, "image": image, "mime": mime,
-                         "w": width, "h": height, "fps": 12},
-                        client_id,
-                    )
+                    with revision_lock:
+                        if frame_revision == revision:
+                            preview.PromptServer.instance.send_sync(
+                                "kj_preview_override",
+                                {"node_id": self.node_id, "image": image, "mime": mime,
+                                 "w": width, "h": height, "fps": 12},
+                                client_id,
+                            )
             except Exception:
                 logging.exception("H3 live preview encoding failed")
 
-        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="h3-preview") as encoder:
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="h3-preview") as encoder:
             def preview_callback(step, x0, x, total_steps):
-                nonlocal pending, decoder
-                # Preserve the final live update; other busy updates need no decode.
+                nonlocal pending, decoder, revision
                 final_step = step + 1 == total_steps
-                if pending is not None and not pending.done() and final_step:
-                    pending.result()
-                if pending is None or pending.done():
+                if final_step or pending is None or pending.done():
                     try:
                         video_latent = preview._normalize_packed_x0(x0, latent_shapes, 0)
                         frames = None
@@ -569,7 +692,10 @@ class _H3LivePreview:
                         if frames is None:
                             frames = preview._decode_video_frames_l2rgb(video_latent, latent_format, 1024)
                         if frames is not None and len(frames):
-                            pending = encoder.submit(encode_frames, frames)
+                            with revision_lock:
+                                revision += 1
+                                frame_revision = revision
+                            pending = encoder.submit(encode_frames, frames, frame_revision)
                     except Exception:
                         logging.exception("H3 live preview decoding failed")
                 if callback is not None:
@@ -672,5 +798,15 @@ class H3SamplerPreview(io.ComfyNode):
             audio=audio,
             frame_rate=Fraction(H3_FPS),
         ))
-        preview = save_video_preview(video).as_dict()
+        filename = f"elvax_h3_preview_{uuid.uuid4().hex}.mp4"
+        video.save_to(
+            os.path.join(folder_paths.get_temp_directory(), filename),
+            format=Types.VideoContainer.MP4,
+            codec="auto",
+            preset="ultrafast",
+        )
+        preview = {
+            "images": [{"filename": filename, "subfolder": "", "type": "temp"}],
+            "animated": (True,),
+        }
         return io.NodeOutput(chain_latent, ui={**preview, "elvax_h3_video": preview["images"]})
