@@ -36,8 +36,8 @@ Image and audio inputs require a compatible model and projector (`mmproj`).
 | Platform | Supported backends |
 |---|---|
 | Windows x64 | CUDA, Vulkan, ROCm, Custom* |
-| Windows ARM64 | CUDA, Vulkan, Custom* |
 | Linux x64 | CUDA, Vulkan, ROCm, Custom* |
+| Windows ARM64 | CUDA, Vulkan, Custom* |
 | Linux ARM64 | CUDA, Vulkan, Custom* |
 | macOS | Metal, Custom* |
 
