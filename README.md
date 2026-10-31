@@ -77,6 +77,14 @@ separate outputs in their original order, Supports Set/Get nodes and Reroutes!
 
 ![Dynamic Pipe In and Dynamic Pipe Out](assets/dynamic-pipes.gif)
 
+## Reroute Switch / Circuit Switch
+
+**Reroute Switch:** Choose A or B. The other output blocks execution, but its links stay connected.
+
+**Circuit Switch:** Closed passes the input; open blocks execution.
+
+![Reroute Switch and Circuit Switch](assets/switches.gif)
+
 ## Prompt Edit / Preview
 
 **Preview** and **edit** text in one node. Edit the preview text with one click,
@@ -132,19 +140,6 @@ lightweight: the node returns the accumulated `chain_latent` and this stage's
 decode workflow.
 
 ![H3 Custom Extension Sampler](assets/custom-extension.jpg)
-
-## Reroute Switch / Circuit Switch
-
-Connect any value and use the A/B toggle to choose which output receives it.
-The inactive output blocks its branch; its links stay connected and appear gray.
-An inactive route into an optional socket is treated as disconnected during execution.
-Media Compare Pro can load through the active route while keeping both captured inputs.
-The selected output is saved with the workflow.
-
-Connect a value through the switch and click the circuit contact to open or close it.
-Closed passes the value by default; open blocks execution while keeping the wire connected.
-
-![Reroute Switch and Circuit Switch](assets/switches.gif)
 
 # Installation
 
