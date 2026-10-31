@@ -59,12 +59,7 @@ with extra VRAM Optimizations to prevent OOM.
 
 ## Media Compare Pro
 
-Connect video, a single image, or audio to `before` and `after`, or drag and drop files onto either side.
-Use Slider, Before/After with overlay, or Side by Side for images and videos.
-Audio compares with audio only, with synchronized Before/After and B/A controls and a shared timeline.
-Image-only comparisons disable playback and audio controls; fullscreen stays available.
-Generation Differences shows available metadata, including PNG and ComfyUI WebP generation settings.
-Captures use ComfyUI's temp folder. Dropped files reuse identical files already in ComfyUI's input or output folders when available.
+Compare videos, single images, or audio and inspect their generation differences. Drag and drop media or load connected inputs manually or automatically. Compare audio with audio only.
 
 <table>
 <tr>
