@@ -39,7 +39,7 @@ the current image and its matching mask downstream, or restore the original.
 Enable `scale_image` to resize the cropped result to the selected megapixels using
 Lanczos. The resolution below the preview shows the output dimensions.
 
-![Load/Crop Image](assets/load-crop.gif)
+![Load/Crop Image](assets/load-crop-v2.gif)
 
 ## Turbo Post Processing
 
