@@ -46,8 +46,6 @@ Image and audio inputs require a compatible model and projector (`mmproj`).
 
 Load, crop, rotate, and scale images in one node. Refine the crop interactively,
 then send the image and matching mask downstream, or restore the original with one click.
-Enable `scale_image` to resize the cropped result to the selected megapixels using
-Lanczos. The resolution below the preview shows the output dimensions.
 
 ![Load/Crop Image](assets/load-crop-v2.gif)
 
