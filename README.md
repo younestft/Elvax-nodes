@@ -32,6 +32,22 @@ Image and audio inputs require a compatible model and projector (`mmproj`).
 </tr>
 </table>
 
+### Platform Compatibility
+
+| Platform | Supported backends |
+|---|---|
+| Windows x64 | CUDA, Vulkan, ROCm, Custom* |
+| Windows ARM64 | CUDA, Vulkan, Custom* |
+| Linux x64 | CUDA, Vulkan, ROCm, Custom* |
+| Linux ARM64 | CUDA, Vulkan, Custom* |
+| macOS (Intel and Apple Silicon) | Metal, Custom* |
+
+*Custom uses your own llama.cpp build.
+
+`auto_unload: true` runs llama-cli and releases its memory after each request. With `false`, a managed local llama-server retains the model for reuse. Changing the loaded configuration restarts it; switching back to `true` closes it. Retained models continue using VRAM that image/video generation may need. The server binds only to loopback, and requests contain their own prompts rather than accumulated chat history.
+
+Windows CUDA and Vulkan tests cover CLI/server inference, image batches, audio, and MTP; Custom build inference and server reuse were also tested. Linux CUDA installation, CLI/server inference helpers, and process-group cleanup passed in Ubuntu under WSL with an RTX 3090. Package selection is checked for all listed platforms. Full Linux ComfyUI workflows, Linux Vulkan, ROCm, Windows/Linux ARM64 hardware, and macOS hardware remain unverified.
+
 ## Load/Crop Image
 
 Load and crop an image quickly in one node. Refine the crop interactively, send
@@ -49,31 +65,6 @@ with extra VRAM Optimizations to prevent OOM.
 
 ![Turbo Post Processing](assets/turbo-post-processing.jpg)
 
-## Media Compare Pro
-
-Compare videos, single images, or audio and inspect their generation differences. Drag and drop media or load connected inputs manually or automatically. Compare audio with audio only.
-
-<table>
-<tr>
-<td align="center"><img src="assets/media-compare-pro-drop.jpg" alt="Media Compare Pro drag-and-drop view" width="100%"></td>
-<td align="center"><img src="assets/media-compare-pro.jpg" alt="Media Compare Pro comparison view" width="100%"></td>
-</tr>
-</table>
-
-## Fast Group Toggles
-
-Toggle groups ON/OFF to enable or bypass their nodes; click the pin to pin or unpin.
-
-Right-click the switch to hide controls. To restore them, right-click the group’s upper-right corner and select **Show Elvax Group Controls**.
-
-![Group Toggles](assets/group-toggles.gif)
-
-## Generation Queue Manager
-
-Manage ComfyUI's generation queue. Reorder, pause, resume, or cancel jobs. Stop a running job and keep it saved to run again. Paused jobs remain saved across restarts.
-
-![Generation Queue Manager](assets/generation-queue-manager.jpg)
-
 ## Dynamic Pipe In / Dynamic Pipe Out
 
 Tidy your complex workflows with Dynamic Pipes : 
@@ -82,13 +73,20 @@ separate outputs in their original order, Supports Set/Get nodes and Reroutes!
 
 ![Dynamic Pipe In and Dynamic Pipe Out](assets/dynamic-pipes.gif)
 
-## Reroute Switch / Circuit Switch
+## Reroute Switch
 
-**Reroute Switch:** Choose A or B. The other output blocks execution, but its links stay connected.
+Connect any value and use the A/B toggle to choose which output receives it.
+The inactive output blocks its branch; its links stay connected and appear gray.
+An inactive route into an optional socket is treated as disconnected during execution.
+Media Compare Pro can load through the active route while keeping both captured media files.
+The selected output is saved with the workflow.
 
-**Circuit Switch:** Closed passes the input; open blocks execution.
+## Circuit Switch
 
-![Reroute Switch and Circuit Switch](assets/switches.gif)
+Connect a value through the switch and click the circuit contact to open or close it.
+Closed passes the input by default; open blocks execution while keeping the wire connected.
+
+![Reroute Switch / Circuit Switch](assets/switches.gif)
 
 ## Prompt Edit / Preview
 
@@ -104,7 +102,7 @@ Build a structured JSON prompt that you can feed to your favourite LLM
 with editable/nested fields, customizable field colours.
 Save/load preserves everything in the JSON including hidden fields and colours.
 
-JSON Prompt Splitter splits a JSON prompt into the selected number of videos, as specified in Prompt Template Builder. It bypasses unused stages in groups named **Group 1**, **Group 2**, and so on.
+JSON Prompt Splitter splits a JSON prompt into the selected number of videos, as specified in Prompt Template Builder, and bypasses unused stages in groups named **Group 1**, **Group 2**, and so on.
 
 ![Prompt Template Builder](assets/prompt-template-builder.jpg)
 
@@ -145,6 +143,36 @@ lightweight: the node returns the accumulated `chain_latent` and this stage's
 decode workflow.
 
 ![H3 Custom Extension Sampler](assets/custom-extension.jpg)
+
+## Media Compare Pro
+
+Connect video, a single image, or audio to `before` and `after`, or drag and drop files onto either side.
+Use Slider, Before/After with overlay, or Side by Side for images and videos.
+Audio compares with audio only, with synchronized Before/After and B/A controls and a shared timeline.
+Image-only comparisons disable playback and audio controls; fullscreen stays available.
+Generation Differences shows available metadata, including PNG and ComfyUI WebP generation settings.
+Captures use ComfyUI's temp folder. Dropped files reuse identical files already in ComfyUI's input or output folders when available.
+
+<table>
+<tr>
+<td align="center"><img src="assets/media-compare-pro-drop.jpg" alt="Media Compare Pro drag-and-drop view" width="100%"></td>
+<td align="center"><img src="assets/media-compare-pro.jpg" alt="Media Compare Pro comparison view" width="100%"></td>
+</tr>
+</table>
+
+## Generation Queue Manager
+
+Manage ComfyUI's generation queue. Reorder, pause, resume, or cancel jobs. Stop a running job and keep it saved to run again. Paused jobs remain saved across restarts.
+
+![Generation Queue Manager](assets/generation-queue-manager.jpg)
+
+## Fast Group Toggles
+
+Toggle groups on or off to enable or bypass their nodes. Click the pin to pin or unpin a group.
+
+Right-click the switch to hide its controls. To restore them, right-click the group's upper-right corner and choose **Show Elvax Group Controls**.
+
+![Fast Group Toggles](assets/group-toggles.gif)
 
 # Installation
 
