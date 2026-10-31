@@ -69,7 +69,7 @@ Compare videos, single images, or audio and inspect their generation differences
 </tr>
 </table>
 
-## Fast Group Toggles
+## Fast Group Controls
 
 Toggle groups on or off to enable or bypass their nodes. Click the pin to pin or unpin a group.
 
