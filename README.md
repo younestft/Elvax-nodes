@@ -55,6 +55,14 @@ Compare videos, single images, or audio and inspect their generation differences
 </tr>
 </table>
 
+## Fast Group Toggles
+
+Toggle groups ON/OFF to enable or bypass their nodes; click the pin to pin or unpin.
+
+Right-click the switch to hide controls. To restore them, right-click the group’s upper-right corner and select **Show Elvax Group Controls**.
+
+![Group Toggles](assets/group-toggles.gif)
+
 ## Generation Queue Manager
 
 Manage ComfyUI's generation queue. Reorder, pause, resume, or cancel jobs. Stop a running job and keep it saved to run again. Paused jobs remain saved across restarts.
@@ -137,14 +145,6 @@ Connect a value through the switch and click the circuit contact to open or clos
 Closed passes the value by default; open blocks execution while keeping the wire connected.
 
 ![Reroute Switch and Circuit Switch](assets/switches.gif)
-
-## Fast Group Toggles
-
-Toggle groups ON/OFF to enable or bypass their nodes; click the pin to pin or unpin.
-
-Right-click the switch to hide controls. To restore them, right-click the group’s upper-right corner and select **Show Elvax Group Controls**.
-
-![Group Toggles](assets/group-toggles.gif)
 
 # Installation
 
