@@ -8,13 +8,17 @@ import threading
 
 import av
 from aiohttp import web
+from PIL import Image
 import folder_paths
-from comfy_api.latest import InputImpl, io
+from comfy_api.latest import InputImpl, io, ui
+import torch
 from server import PromptServer
 
 
-CAPTURE_SUBFOLDER = "Elvax/video_compare_pro"
+CAPTURE_SUBFOLDER = "Elvax/media_compare_pro"
 VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v"}
+AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3", ".ogg", ".opus", ".m4a"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 SETTING_LABELS = {
     "seed": "Seed", "noise_seed": "Seed", "sampler_name": "Sampler",
     "scheduler": "Scheduler", "steps": "Steps", "cfg": "CFG",
@@ -220,17 +224,35 @@ def _generation_settings(prompt, roots, workflow_id=None):
 
 def _file_generation_settings(path, source_name=None):
     try:
-        with av.open(str(path)) as container:
-            metadata = dict(container.metadata)
-            stream = container.streams.video[0] if container.streams.video else None
-            technical = []
-            if stream:
-                technical.append({"name": "Final resolution", "values": [f"{stream.width} × {stream.height}"]})
-                if stream.average_rate:
-                    technical.append({"name": "Frame rate", "values": [str(stream.average_rate)]})
-                duration = stream.duration * stream.time_base if stream.duration and stream.time_base else None
-                if duration:
-                    technical.append({"name": "Duration", "values": [f"{float(duration):.3f} s"]})
+        if path.suffix.lower() in IMAGE_EXTENSIONS:
+            with Image.open(path) as image:
+                metadata = dict(image.info)
+                exif = image.getexif()
+                for value in exif.values():
+                    if isinstance(value, str) and value.startswith(("prompt:", "workflow:")):
+                        key, content = value.split(":", 1)
+                        metadata[key] = content
+                width, height = image.size
+                if exif.get(0x0112) in (5, 6, 7, 8):
+                    width, height = height, width
+                technical = [{"name": "Final resolution", "values": [f"{width} × {height}"]}]
+        else:
+            with av.open(str(path)) as container:
+                metadata = dict(container.metadata)
+                stream = container.streams.video[0] if container.streams.video else None
+                technical = []
+                if path.suffix.lower() in AUDIO_EXTENSIONS and container.streams.audio:
+                    audio = container.streams.audio[0]
+                    technical.append({"name": "Sample rate", "values": [f"{audio.rate} Hz"]})
+                    if container.duration:
+                        technical.append({"name": "Duration", "values": [f"{container.duration / av.time_base:.3f} s"]})
+                if stream:
+                    technical.append({"name": "Final resolution", "values": [f"{stream.width} × {stream.height}"]})
+                    if stream.average_rate:
+                        technical.append({"name": "Frame rate", "values": [str(stream.average_rate)]})
+                    duration = stream.duration * stream.time_base if stream.duration and stream.time_base else None
+                    if duration:
+                        technical.append({"name": "Duration", "values": [f"{float(duration):.3f} s"]})
     except (OSError, av.error.FFmpegError):
         return []
     prompt = None
@@ -256,7 +278,9 @@ def _file_generation_settings(path, source_name=None):
             continue
         class_type = node.get("class_type", "").casefold()
         prefix = inputs.get("filename_prefix")
-        if prefix and ("video" in class_type or "combine" in class_type):
+        if prefix and ("video" in class_type or "combine" in class_type or
+                       (path.suffix.lower() in IMAGE_EXTENSIONS and "image" in class_type) or
+                       (path.suffix.lower() in AUDIO_EXTENSIONS and "audio" in class_type)):
             video_outputs.append((0, node_id, inputs))
             prefix = Path(str(prefix)).name.casefold()
             if video_name.startswith(prefix):
@@ -295,7 +319,7 @@ def capture_video(video):
     return {"filename": filename, "subfolder": CAPTURE_SUBFOLDER, "type": "temp"}
 
 
-def source_video_path(entry):
+def source_media_path(entry):
     roots = {
         "input": folder_paths.get_input_directory(),
         "output": folder_paths.get_output_directory(),
@@ -303,20 +327,20 @@ def source_video_path(entry):
     }
     root = roots.get(entry.get("type", "input"))
     if root is None:
-        raise ValueError("The selected video could not be accessed.")
+        raise ValueError("The selected media could not be accessed.")
     directory = Path(root).resolve()
     filename = entry.get("filename", "")
     if not isinstance(filename, str) or not filename:
-        raise ValueError("No video is available from the connected node yet.")
+        raise ValueError("No media is available from the connected node yet.")
     path = (directory / entry.get("subfolder", "") / filename).resolve()
-    if not path.is_relative_to(directory) or path.suffix.lower() not in VIDEO_EXTENSIONS:
-        raise ValueError("The selected video could not be accessed.")
+    if not path.is_relative_to(directory) or path.suffix.lower() not in VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS:
+        raise ValueError("The selected media could not be accessed.")
     if not path.is_file():
-        raise FileNotFoundError("The source video file could not be found. Check that it still exists, then load it again.")
+        raise FileNotFoundError("The source media file could not be found. Check that it still exists, then load it again.")
     return path
 
 
-def _existing_video_reference(upload, source_name, cancelled=None):
+def _existing_media_reference(upload, source_name, cancelled=None):
     name = str(source_name).replace("\\", "/").rsplit("/", 1)[-1]
     for kind, directory in (("output", folder_paths.get_output_directory()),
                             ("input", folder_paths.get_input_directory())):
@@ -357,24 +381,36 @@ def _existing_video_reference(upload, source_name, cancelled=None):
     return None
 
 
-def _validate_uploaded_video(path):
+def _validate_uploaded_media(path):
+    if path.suffix.lower() in IMAGE_EXTENSIONS:
+        try:
+            with Image.open(path) as image:
+                image.verify()
+        except (OSError, SyntaxError) as error:
+            raise ValueError("The file does not contain a readable image.") from error
+        return
     try:
         with av.open(str(path)) as container:
+            if path.suffix.lower() in AUDIO_EXTENSIONS:
+                if not container.streams.audio or next(container.decode(audio=0), None) is None:
+                    raise ValueError("The file does not contain readable audio.")
+                return
             if not container.streams.video or next(container.decode(video=0), None) is None:
                 raise ValueError("The file does not contain a readable video.")
     except (OSError, av.error.FFmpegError) as error:
-        raise ValueError("The file does not contain a readable video.") from error
+        kind = "audio" if path.suffix.lower() in AUDIO_EXTENSIONS else "video"
+        raise ValueError(f"The file does not contain readable {kind}.") from error
 
 
-@PromptServer.instance.routes.post("/elvax/video-compare-pro/upload")
-async def upload_compare_video(request):
+@PromptServer.instance.routes.post("/elvax/media-compare-pro/upload")
+async def upload_compare_media(request):
     reader = await request.multipart()
     field = await reader.next()
-    if field is None or field.name != "video":
-        return web.json_response({"error": "Drop a video file."}, status=400)
+    if field is None or field.name != "media":
+        return web.json_response({"error": "Drop a video, image, or audio file."}, status=400)
     extension = Path(field.filename or "").suffix.lower()
-    if extension not in VIDEO_EXTENSIONS:
-        return web.json_response({"error": "This video file format is not supported."}, status=400)
+    if extension not in VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS:
+        return web.json_response({"error": "This media file format is not supported."}, status=400)
     directory = Path(folder_paths.get_temp_directory()) / CAPTURE_SUBFOLDER
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{uuid.uuid4().hex}{extension}"
@@ -404,17 +440,18 @@ async def upload_compare_video(request):
         with path.open("wb") as output:
             while chunk := await field.read_chunk(size=1024 * 1024):
                 await worker(output.write, chunk)
-        await worker(_validate_uploaded_video, path)
-        existing = await worker(_existing_video_reference, path, field.filename, cancelled)
+        await worker(_validate_uploaded_media, path)
+        existing = await worker(_existing_media_reference, path, field.filename, cancelled)
         source, result = existing if existing else (path, {"filename": path.name,
                                                            "subfolder": CAPTURE_SUBFOLDER, "type": "temp"})
+        result["media_type"] = "image" if extension in IMAGE_EXTENSIONS else "audio" if extension in AUDIO_EXTENSIONS else "video"
         result["generation"] = await worker(_file_generation_settings, source, field.filename)
         if existing:
             path.unlink()
         complete = True
         return web.json_response(result)
     except (OSError, ValueError) as error:
-        return web.json_response({"error": f"Could not load the dropped video: {error}"}, status=400)
+        return web.json_response({"error": f"Could not load the dropped file: {error}"}, status=400)
     finally:
         watcher.cancel()
         await asyncio.gather(watcher, return_exceptions=True)
@@ -422,11 +459,11 @@ async def upload_compare_video(request):
             path.unlink(missing_ok=True)
 
 
-@PromptServer.instance.routes.post("/elvax/video-compare-pro/capture")
-async def capture_existing_video(request):
+@PromptServer.instance.routes.post("/elvax/media-compare-pro/capture")
+async def capture_existing_media(request):
     try:
         entry = await request.json()
-        path = source_video_path(entry)
+        path = source_media_path(entry)
     except (ValueError, TypeError, AttributeError) as error:
         return web.json_response({"error": str(error)}, status=400)
     except FileNotFoundError as error:
@@ -434,28 +471,31 @@ async def capture_existing_video(request):
     # This route only accepts files in ComfyUI's media directories, never arbitrary paths.
     try:
         capture_directory = (Path(folder_paths.get_temp_directory()) / CAPTURE_SUBFOLDER).resolve()
-        if path.parent == capture_directory and re.fullmatch(r"[0-9a-f]{32}\.mp4", path.name):
+        if path.suffix.lower() in IMAGE_EXTENSIONS | AUDIO_EXTENSIONS:
+            result = dict(entry)
+            result["media_type"] = "image" if path.suffix.lower() in IMAGE_EXTENSIONS else "audio"
+        elif path.parent == capture_directory and re.fullmatch(r"[0-9a-f]{32}\.mp4", path.name):
             result = {"filename": path.name, "subfolder": CAPTURE_SUBFOLDER, "type": "temp"}
         else:
             result = await asyncio.to_thread(capture_video, InputImpl.VideoFromFile(str(path)))
         result["generation"] = entry.get("generation") or await asyncio.to_thread(_file_generation_settings, path)
     except (OSError, ValueError) as error:
-        return web.json_response({"error": f"Could not prepare the video: {error}"}, status=400)
+        return web.json_response({"error": f"Could not prepare the media: {error}"}, status=400)
     return web.json_response(result)
 
 
-class VideoComparePro(io.ComfyNode):
+class MediaComparePro(io.ComfyNode):
     @classmethod
     def define_schema(cls):
         return io.Schema(
-            node_id="ElvaxVideoComparePro",
-            display_name="Video Compare Pro",
+            node_id="ElvaxMediaComparePro",
+            display_name="Media Compare Pro",
             category="Elvax Nodes/Utilities",
             search_aliases=["elvax", "before after", "comparison"],
-            description="Compare two videos and inspect their generation differences in a dedicated panel. Drag and drop videos, or load them from connected sockets manually or automatically.",
+            description="Compare videos, single images, or audio and inspect their generation differences. Drag and drop media or load connected inputs manually or automatically. Compare audio with audio only.",
             inputs=[
-                io.Video.Input("before_video", optional=True),
-                io.Video.Input("after_video", optional=True),
+                io.MultiType.Input("before", types=[io.Video, io.Image, io.Audio], optional=True, tooltip="Connect media (video, image, or audio) to use as Before."),
+                io.MultiType.Input("after", types=[io.Video, io.Image, io.Audio], optional=True, tooltip="Connect media (video, image, or audio) to use as After."),
             ],
             hidden=[io.Hidden.unique_id, io.Hidden.prompt, io.Hidden.extra_pnginfo],
             outputs=[],
@@ -463,24 +503,33 @@ class VideoComparePro(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, before_video=None, after_video=None):
-        if before_video is None and after_video is None:
-            return io.NodeOutput()
-        ui = {}
+    def execute(cls, before=None, after=None):
+        def kind(value):
+            return "image" if isinstance(value, torch.Tensor) else "audio" if isinstance(value, dict) else "video"
+        for value in (before, after):
+            if isinstance(value, torch.Tensor) and value.shape[0] != 1:
+                raise ValueError("Connect a single image, not an image sequence.")
+            if isinstance(value, dict) and value["waveform"].shape[0] != 1:
+                raise ValueError("Connect a single audio clip.")
+        if before is not None and after is not None and (kind(before) == "audio") != (kind(after) == "audio"):
+            raise ValueError("Compare audio with audio only.")
+        result = {}
         prompt = cls.hidden.prompt or {}
         workflow_id = (cls.hidden.extra_pnginfo or {}).get("workflow", {}).get("id")
-        node_id = str(cls.hidden.unique_id)
-        node_inputs = prompt.get(node_id, {}).get("inputs", {}) if isinstance(prompt, dict) else {}
-        if before_video is not None:
-            settings = _generation_settings(prompt, _linked_nodes(node_inputs.get("before_video"), prompt), workflow_id)
-            entry = capture_video(before_video)
-            file_settings = _file_generation_settings(source_video_path(entry))
-            entry["generation"] = settings + [item for item in file_settings if item["name"] in ("Final resolution", "Frame rate", "Duration")] if settings else file_settings
-            ui["elvax_compare_pro_before_video"] = [entry]
-        if after_video is not None:
-            settings = _generation_settings(prompt, _linked_nodes(node_inputs.get("after_video"), prompt), workflow_id)
-            entry = capture_video(after_video)
-            file_settings = _file_generation_settings(source_video_path(entry))
-            entry["generation"] = settings + [item for item in file_settings if item["name"] in ("Final resolution", "Frame rate", "Duration")] if settings else file_settings
-            ui["elvax_compare_pro_after_video"] = [entry]
-        return io.NodeOutput(ui=ui)
+        inputs = prompt.get(str(cls.hidden.unique_id), {}).get("inputs", {})
+        for role, value in (("before", before), ("after", after)):
+            if value is None:
+                continue
+            media_type = kind(value)
+            if media_type == "video":
+                entry = capture_video(value)
+            elif media_type == "image":
+                entry = dict(ui.ImageSaveHelper.save_images(value, f"{CAPTURE_SUBFOLDER}/{uuid.uuid4().hex}", io.FolderType.temp, cls)[0])
+            else:
+                entry = dict(ui.AudioSaveHelper.save_audio(value, f"{CAPTURE_SUBFOLDER}/{uuid.uuid4().hex}", io.FolderType.temp, cls, format="flac")[0])
+            entry["media_type"] = media_type
+            settings = _generation_settings(prompt, _linked_nodes(inputs.get(role), prompt), workflow_id)
+            file_settings = _file_generation_settings(source_media_path(entry))
+            entry["generation"] = settings + [item for item in file_settings if item["name"] in ("Final resolution", "Frame rate", "Duration", "Sample rate")] if settings else file_settings
+            result[f"elvax_compare_pro_{role}_media"] = [entry]
+        return io.NodeOutput(ui=result)

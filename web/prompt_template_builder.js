@@ -58,7 +58,7 @@ function containerRows(rows) {
 
 function visitContainers(rows, visit, path = "", arrayItems = false) {
   rows.forEach((row, index) => {
-    const pointer = `${path}/${arrayItems ? index : pointerSegment(row.key)}`;
+    const pointer = `${path}/${arrayItems ? index : pointerSegment(String(row.key ?? "").trim())}`;
     if (row.type !== "object" && row.type !== "array") return;
     visit(row, pointer);
     visitContainers(row.value, visit, pointer, row.type === "array");
@@ -179,7 +179,24 @@ function itemFromValue(value, path, hiddenFields, fieldColors = {}) {
   return { type: field.type, value: field.value, expanded: field.expanded, hidden: field.hidden, color: field.color };
 }
 
-function valueFromRow(row, label, pointer = "", includeHidden = false, hiddenFields = null, fieldColors = null) {
+function restoreDraftFields(rows, drafts, parent = "", arrayItems = false) {
+  if (!drafts || typeof drafts !== "object" || Array.isArray(drafts)) return;
+  rows.forEach((row, index) => {
+    const path = `${parent}/${arrayItems ? index : pointerSegment(String(row.key ?? "").trim())}`;
+    const draft = Object.hasOwn(drafts, path) ? drafts[path] : null;
+    if (draft?.hidden === true) rows[index] = row = arrayItems ? normalizeItem(draft) : normalizeField(draft);
+    if (row.type === "object" || row.type === "array") restoreDraftFields(row.value, drafts, path, row.type === "array");
+  });
+}
+
+function valueFromRow(row, label, pointer = "", includeHidden = false, hiddenFields = null, fieldColors = null, draftFields = null) {
+  if (row.hidden && includeHidden && draftFields) {
+    try { return valueFromRow({ ...row, hidden: false }, label, pointer, true, hiddenFields, fieldColors, draftFields); }
+    catch {
+      draftFields[pointer] = row;
+      return null;
+    }
+  }
   if (row.type === "number") {
     const value = parsePromptJSON(String(row.value));
     if (!JSON.isRawJSON(value) && (typeof value !== "number" || !Number.isFinite(value))) {
@@ -189,20 +206,20 @@ function valueFromRow(row, label, pointer = "", includeHidden = false, hiddenFie
   }
   if (row.type === "boolean") return row.value === true || String(row.value).toLowerCase() === "true";
   if (row.type === "json") return parsePromptJSON(row.value);
-  if (row.type === "object") return objectFromRows(row.value, label, pointer, includeHidden, hiddenFields, fieldColors);
+  if (row.type === "object") return objectFromRows(row.value, label, pointer, includeHidden, hiddenFields, fieldColors, draftFields);
   if (row.type === "array") {
     return row.value.flatMap((item, index) => {
       const itemPointer = `${pointer}/${index}`;
       if (item.hidden) hiddenFields?.push(itemPointer);
       if (FIELD_COLORS.includes(item.color) && fieldColors) fieldColors[itemPointer] = item.color;
       if (item.hidden && !includeHidden) return [];
-      return [valueFromRow(item, `${label}[${index + 1}]`, itemPointer, includeHidden, hiddenFields, fieldColors)];
+      return [valueFromRow(item, `${label}[${index + 1}]`, itemPointer, includeHidden, hiddenFields, fieldColors, draftFields)];
     });
   }
   return String(row.value ?? "");
 }
 
-function objectFromRows(rows, path = "root", pointer = "", includeHidden = false, hiddenFields = null, fieldColors = null) {
+function objectFromRows(rows, path = "root", pointer = "", includeHidden = false, hiddenFields = null, fieldColors = null, draftFields = null) {
   const names = new Set();
   return Object.fromEntries(rows.flatMap((row) => {
     const key = String(row.key || "").trim();
@@ -213,7 +230,7 @@ function objectFromRows(rows, path = "root", pointer = "", includeHidden = false
     if (row.hidden && !includeHidden) return [];
     if (names.has(key)) throw new Error(`Duplicate field "${path}.${key}". Rename one of these fields.`);
     names.add(key);
-    return [[key, valueFromRow(row, `${path}.${key}`, childPointer, includeHidden, hiddenFields, fieldColors)]];
+    return [[key, valueFromRow(row, `${path}.${key}`, childPointer, includeHidden, hiddenFields, fieldColors, draftFields)]];
   }));
 }
 
@@ -239,6 +256,7 @@ function installNode(node) {
   let colorOverlay = null;
   let jsonOverlay = null;
   let loadRequest = 0;
+  let editRevision = 0;
   let dragState = null;
   const scrollTimers = new Set();
   let syncFrame = null;
@@ -596,7 +614,10 @@ function installNode(node) {
     },
   });
   const sync = (markModified = true) => {
-    if (markModified) modified = true;
+    if (markModified) {
+      modified = true;
+      editRevision += 1;
+    }
     modifiedDot.hidden = !modified;
     updateDuplicateWarnings();
     if (syncFrame == null) syncFrame = requestAnimationFrame(() => {
@@ -662,8 +683,8 @@ function installNode(node) {
     }
     return fields;
   };
-  const jsonObject = (includeHidden = false, hiddenFields = null, fieldColors = null) => {
-    const fields = objectFromRows(rows, "root", "", includeHidden, hiddenFields, fieldColors);
+  const jsonObject = (includeHidden = false, hiddenFields = null, fieldColors = null, draftFields = null) => {
+    const fields = objectFromRows(rows, "root", "", includeHidden, hiddenFields, fieldColors, draftFields);
     const fixed = fixedFields();
     const names = Object.entries(fieldKeys).map(([name, value]) => String(value || "").trim() || name);
     if (new Set(names).size !== names.length) throw new Error("The two fixed fields must have different names.");
@@ -1102,7 +1123,7 @@ function installNode(node) {
         let moved = state.row;
         if (state.sourceArrayItems !== state.destination.arrayItems) {
           if (state.destination.arrayItems) {
-            moved = { type: "object", value: [state.row], expanded: false, hidden: false, color: "" };
+            moved = { type: "object", value: [{ ...state.row, hidden: false }], expanded: false, hidden: Boolean(state.row.hidden), color: "" };
           } else {
             moved = { ...state.row, key: nextObjectKey(state.destination.fields, "item") };
           }
@@ -1243,6 +1264,7 @@ function installNode(node) {
     fileInput.value = "";
     if (!file) return;
     const request = ++loadRequest;
+    const revision = editRevision;
     try {
       if (modified) {
         const confirmed = await app.extensionManager.dialog.confirm({ title: "Replace current template?", message: "Unsaved changes will be lost." });
@@ -1250,6 +1272,10 @@ function installNode(node) {
       }
       const parsed = parsePromptJSON(await file.text());
       if (request !== loadRequest) return;
+      if (revision !== editRevision) {
+        toast("warn", "Template not loaded", "The template changed while the file was loading. Load it again to replace your edits.");
+        return;
+      }
       if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object" || JSON.isRawJSON(parsed)) {
         throw new Error("The file must contain a JSON object at its top level.");
       }
@@ -1301,7 +1327,10 @@ function installNode(node) {
       rows.splice(0, rows.length, ...loadedRows);
       const layout = hasHiddenMetadata ? metadata.layout : null;
       restoreExpansion(rows, layout?.expanded);
-      if (hasHiddenMetadata) restoreUnnamedFields(rows, metadata.unnamedFields);
+      if (hasHiddenMetadata) {
+        restoreUnnamedFields(rows, metadata.unnamedFields);
+        restoreDraftFields(rows, metadata.draftFields);
+      }
       wrapValues = typeof layout?.wrapValues === "boolean" ? layout.wrapValues : true;
       updateWrapToggle();
       filename = file.name.replace(/\.json$/i, "") || "Untitled";
@@ -1319,13 +1348,15 @@ function installNode(node) {
     try {
       const hiddenFields = [];
       const fieldColors = {};
-      const savedObject = jsonObject(true, hiddenFields, fieldColors);
+      const draftFields = Object.create(null);
+      const savedObject = jsonObject(true, hiddenFields, fieldColors, draftFields);
       {
         if (Object.hasOwn(savedObject, HIDDEN_FIELDS_KEY)) {
           throw new Error(`Rename the field "${HIDDEN_FIELDS_KEY}" before saving field metadata.`);
         }
         savedObject[HIDDEN_FIELDS_KEY] = { version: 1, hiddenFields, fieldColors,
           unnamedFields: collectUnnamedFields(rows),
+          ...(Object.keys(draftFields).length ? { draftFields } : {}),
           layout: { wrapValues, expanded: expansionState(rows) },
           fixedFields: Object.fromEntries([...fixedInputs].map(([key, controls]) => [key,
             { name: fieldKeys[key], value: controls.value.value, enabled: fixedEnabled[key] === true }])) };

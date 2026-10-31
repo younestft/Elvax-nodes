@@ -2,7 +2,7 @@ import { app } from "/scripts/app.js";
 import { api } from "/scripts/api.js";
 import { CIRCUIT_SWITCH, REROUTE_SWITCH, ROUTE_CHANGED, selectedOutput } from "./reroute_switch.js";
 
-const NODE_TYPE = "ElvaxVideoComparePro";
+const NODE_TYPE = "ElvaxMediaComparePro";
 const MIN_HEIGHT = 180;
 const MIN_SIZE = 360;
 const GENERATION_ORDER = ["Steps", "Sampler", "Scheduler", "Model", "LoRA", "Seed",
@@ -21,10 +21,10 @@ function mediaURL(entry) {
 }
 
 function inputSlot(node, role) {
-  return node.inputs?.findIndex((input) => input.name === `${role}_video`) ?? -1;
+  return node.inputs?.findIndex((input) => input.name === `${role}`) ?? -1;
 }
 
-function inputNode(node, role) {
+function inputSource(node, role) {
   let slot = inputSlot(node, role);
   let source = node;
   const visited = new Set();
@@ -42,16 +42,31 @@ function inputNode(node, role) {
     if (!source) return null;
     if (source.type === CIRCUIT_SWITCH && source.widgets?.find((widget) => widget.name === "closed")?.value === false) return null;
     if (source.type === REROUTE_SWITCH && link.origin_slot !== selectedOutput(source)) return null;
-    if (!["Reroute", "Reroute (rgthree)", "SetNode", "GetNode", REROUTE_SWITCH, CIRCUIT_SWITCH].includes(source.type)) return source;
+    if (!["Reroute", "Reroute (rgthree)", "SetNode", "GetNode", REROUTE_SWITCH, CIRCUIT_SWITCH].includes(source.type)) return { node: source, slot: link.origin_slot };
     slot = 0;
   }
   return null;
 }
 
+function inputNode(node, role) {
+  return inputSource(node, role)?.node ?? null;
+}
+
 function inputKey(node, role) {
-  const slot = inputSlot(node, role);
-  const link = slot >= 0 ? node.inputs[slot]?.link : null;
-  return link == null ? null : String(link);
+  const source = inputSource(node, role);
+  if (!source) return null;
+  return JSON.stringify([node.inputs[inputSlot(node, role)].link, source.node.graph?.id, source.node.id, source.slot]);
+}
+
+function outputMediaEntry(source, slot) {
+  const type = source.outputs?.[slot]?.type;
+  if (!["VIDEO", "IMAGE", "AUDIO"].includes(type)) return null;
+  if (source.outputs.filter(output => output.type === type).length > 1) return null;
+  const output = app.nodeOutputs?.[source.id];
+  const entries = type === "AUDIO" ? output?.audio : [...(output?.images || []), ...(output?.videos || [])];
+  const extension = type === "AUDIO" ? /\.(wav|flac|mp3|ogg|opus|m4a)$/i
+    : type === "IMAGE" ? /\.(png|jpe?g|webp|bmp)$/i : /\.(mp4|webm|mov|mkv|avi|m4v)$/i;
+  return entries?.findLast(entry => typeof entry.filename === "string" && extension.test(entry.filename)) ?? null;
 }
 
 function timeLabel(time) {
@@ -60,11 +75,13 @@ function timeLabel(time) {
 }
 
 function install(node) {
-  if (node.__elvaxVideoComparePro) return;
-  node.__elvaxVideoComparePro = true;
+  if (node.__elvaxMediaComparePro) return;
+  node.__elvaxMediaComparePro = true;
   node.properties ||= {};
-  node.properties.elvaxVideoComparePro ||= { position: 50, volume: 1, muted: false, loop: true, audioSource: null };
-  const state = () => node.properties.elvaxVideoComparePro;
+  node.properties.elvaxMediaComparePro ||= { position: 50, volume: 1, muted: false, loop: true, audioSource: null };
+  const state = () => node.properties.elvaxMediaComparePro;
+  const audioOnly = () => [state().before, state().after].some(entry => entry?.media_type === "audio");
+  const incompatible = () => Boolean(state().before && state().after && (state().before.media_type === "audio") !== (state().after.media_type === "audio"));
   function migrateAudioDefault() {
     if (state().audioAuto === undefined) {
       state().audioAuto = true;
@@ -108,158 +125,168 @@ function install(node) {
   const uploads = new Map();
 
   const root = document.createElement("div");
-  root.className = "elvax-video-compare-pro";
+  root.className = "elvax-media-compare-pro";
   root.style.cssText = "position:relative;display:flex;flex-direction:column;gap:var(--compare-gap,6px);width:100%;height:100%;min-height:0;min-width:0;box-sizing:border-box;contain:size;overflow:hidden;font:12px Arial,sans-serif;color:#eee;";
   const style = document.createElement("style");
   style.textContent = `
-    .elvax-video-compare-pro,.elvax-video-compare-pro * {user-select:none;-webkit-user-select:none;}
-    .elvax-video-compare-pro .status {user-select:text;-webkit-user-select:text;}
-    .elvax-video-compare-pro .generation-panel,.elvax-video-compare-pro .generation-panel * {user-select:text;-webkit-user-select:text;}
-    .elvax-video-compare-pro button,.elvax-video-compare-pro input {outline:none !important;-webkit-tap-highlight-color:transparent;}
-    .elvax-video-compare-pro input[type=range]:focus,.elvax-video-compare-pro input[type=range]:focus-visible {outline:none !important;}
-    .elvax-video-compare-pro input[type=range]::-moz-focus-outer {border:0;}
-    .elvax-video-compare-pro button {box-sizing:border-box;font:12px Arial,sans-serif;color:#eee;cursor:pointer;white-space:nowrap;}
-    .elvax-video-compare-pro button:disabled {opacity:.5;cursor:wait;}
-    .elvax-video-compare-pro .capture-row {display:flex;}
-    .elvax-video-compare-pro .captions {--caption-inset:8px;position:relative;z-index:1;width:100%;min-width:0;box-sizing:border-box;display:flex;flex:0 0 auto;align-items:center;gap:8px;padding:6px calc(var(--caption-right,0px) + var(--caption-inset)) 6px calc(var(--caption-left,0px) + var(--caption-inset));font-size:11px;line-height:16px;}
-    .elvax-video-compare-pro .media-row {position:relative;display:grid;flex:1;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);min-height:0;min-width:0;overflow:hidden;}
-    .elvax-video-compare-pro .generation-open .media-row {grid-template-columns:minmax(0,1fr) 6px minmax(0,var(--generation-panel-width,50%));}
-    .elvax-video-compare-pro .media-row > .captions {grid-area:1 / 1;grid-template-columns:minmax(0,1fr) minmax(0,2fr) minmax(0,1fr);min-height:40px;}
-    .elvax-video-compare-pro .media-row > .stage {grid-area:2 / 1;min-width:0;}
-    .elvax-video-compare-pro .generation-panel {grid-area:1 / 3 / 3 / 4;display:none;flex-direction:column;min-width:0;min-height:0;box-sizing:border-box;overflow:hidden;border:1px solid #ffffff1c;border-radius:0;background:#171b20;color:#c7cdd3;font-size:11px;line-height:1.5;container-type:inline-size;}
-    .elvax-video-compare-pro .generation-resizer {grid-area:1 / 2 / 3 / 3;display:none;position:relative;cursor:col-resize;touch-action:none;}
-    .elvax-video-compare-pro .generation-open .generation-resizer {display:block;}
-    .elvax-video-compare-pro .generation-resizer::after {content:"";position:absolute;inset:0 2px;background:#ffffff14;transition:background .15s;}
-    .elvax-video-compare-pro .generation-resizer:hover::after,.elvax-video-compare-pro .generation-resizer:focus-visible::after {background:#8bd4ff80;}
-    .elvax-video-compare-pro .generation-header {display:flex;flex:0 0 auto;align-items:center;gap:6px;min-height:40px;padding:4px 6px;box-sizing:border-box;border-bottom:1px solid #ffffff0d;}
-    .elvax-video-compare-pro .generation-header .generation-heading {flex:1;min-width:0;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-    .elvax-video-compare-pro .generation-heading {color:#dce7ef;font-size:11px;font-weight:600;}
-    .elvax-video-compare-pro .generation-toggle {position:relative;display:inline-flex;flex:0 0 24px;align-items:center;justify-content:center;width:24px;height:24px;padding:4px;border:1px solid #ffffff18;border-radius:5px;background:#17232c;color:#8bd4ff;}
-    .elvax-video-compare-pro .generation-toggle:hover {background:#ffffff0c;border-color:#ffffff14;color:#fff;}
-    .elvax-video-compare-pro .generation-toggle[aria-expanded=true] {border-color:#ffffff20;border-radius:2px;background:#202b34;color:#b9e3ff;}
-    .elvax-video-compare-pro .generation-icon {width:15px;height:15px;flex:0 0 15px;transform:scaleX(-1);}
-    .elvax-video-compare-pro .generation-toggle[aria-expanded=true] .generation-icon {transform:none;}
-    .elvax-video-compare-pro .generation-count {margin-left:auto;padding:2px 6px;border-radius:4px;background:#8bd4ff12;color:#a9cce3;font-size:9px;white-space:nowrap;}
-    .elvax-video-compare-pro .generation-count:empty {display:none;}
+    .elvax-media-compare-pro,.elvax-media-compare-pro * {user-select:none;-webkit-user-select:none;}
+    .elvax-media-compare-pro .status {user-select:text;-webkit-user-select:text;}
+    .elvax-media-compare-pro .generation-panel,.elvax-media-compare-pro .generation-panel * {user-select:text;-webkit-user-select:text;}
+    .elvax-media-compare-pro button,.elvax-media-compare-pro input {outline:none !important;-webkit-tap-highlight-color:transparent;}
+    .elvax-media-compare-pro input[type=range]:focus,.elvax-media-compare-pro input[type=range]:focus-visible {outline:none !important;}
+    .elvax-media-compare-pro input[type=range]::-moz-focus-outer {border:0;}
+    .elvax-media-compare-pro button {box-sizing:border-box;font:12px Arial,sans-serif;color:#eee;cursor:pointer;white-space:nowrap;}
+    .elvax-media-compare-pro button:disabled {opacity:.5;cursor:default;}
+    .elvax-media-compare-pro .capture-row {display:flex;}
+    .elvax-media-compare-pro .captions {--caption-inset:8px;position:relative;z-index:1;width:100%;min-width:0;box-sizing:border-box;display:flex;flex:0 0 auto;align-items:center;gap:8px;padding:6px calc(var(--caption-right,0px) + var(--caption-inset)) 6px calc(var(--caption-left,0px) + var(--caption-inset));font-size:11px;line-height:16px;}
+    .elvax-media-compare-pro .media-row {position:relative;display:grid;flex:1;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);min-height:0;min-width:0;overflow:hidden;}
+    .elvax-media-compare-pro .generation-open .media-row {grid-template-columns:minmax(0,1fr) 6px minmax(0,var(--generation-panel-width,50%));}
+    .elvax-media-compare-pro .media-row > .captions {grid-area:1 / 1;grid-template-columns:minmax(0,1fr) minmax(0,2fr) minmax(0,1fr);min-height:40px;}
+    .elvax-media-compare-pro .media-row > .stage {grid-area:2 / 1;min-width:0;}
+    .elvax-media-compare-pro .generation-panel {grid-area:1 / 3 / 3 / 4;display:none;flex-direction:column;min-width:0;min-height:0;box-sizing:border-box;overflow:hidden;border:1px solid #ffffff1c;border-radius:0;background:#171b20;color:#c7cdd3;font-size:11px;line-height:1.5;container-type:inline-size;}
+    .elvax-media-compare-pro .generation-resizer {grid-area:1 / 2 / 3 / 3;display:none;position:relative;cursor:col-resize;touch-action:none;}
+    .elvax-media-compare-pro .generation-open .generation-resizer {display:block;}
+    .elvax-media-compare-pro .generation-resizer::after {content:"";position:absolute;inset:0 2px;background:#ffffff14;transition:background .15s;}
+    .elvax-media-compare-pro .generation-resizer:hover::after,.elvax-media-compare-pro .generation-resizer:focus-visible::after {background:#8bd4ff80;}
+    .elvax-media-compare-pro .generation-header {display:flex;flex:0 0 auto;align-items:center;gap:6px;min-height:40px;padding:4px 6px;box-sizing:border-box;border-bottom:1px solid #ffffff0d;}
+    .elvax-media-compare-pro .generation-header .generation-heading {flex:1;min-width:0;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .elvax-media-compare-pro .generation-heading {color:#dce7ef;font-size:11px;font-weight:600;}
+    .elvax-media-compare-pro .generation-toggle {position:relative;display:inline-flex;flex:0 0 24px;align-items:center;justify-content:center;width:24px;height:24px;padding:4px;border:1px solid #ffffff18;border-radius:5px;background:#17232c;color:#8bd4ff;}
+    .elvax-media-compare-pro .generation-toggle:hover {background:#ffffff0c;border-color:#ffffff14;color:#fff;}
+    .elvax-media-compare-pro .generation-toggle[aria-expanded=true] {border-color:#ffffff20;border-radius:2px;background:#202b34;color:#b9e3ff;}
+    .elvax-media-compare-pro .generation-icon {width:15px;height:15px;flex:0 0 15px;transform:scaleX(-1);}
+    .elvax-media-compare-pro .generation-toggle[aria-expanded=true] .generation-icon {transform:none;}
+    .elvax-media-compare-pro .generation-count {margin-left:auto;padding:2px 6px;border-radius:4px;background:#8bd4ff12;color:#a9cce3;font-size:9px;white-space:nowrap;}
+    .elvax-media-compare-pro .generation-count:empty {display:none;}
     @container (max-width: 240px) {.generation-count {display:none;}}
-    .elvax-video-compare-pro .generation-content {display:block;flex:1;min-height:0;overflow:auto;padding:12px;scrollbar-width:thin;scrollbar-color:#ffffff26 transparent;}
-    .elvax-video-compare-pro .generation-comparison {position:relative;margin-top:12px;overflow:hidden;border:1px solid #ffffff12;border-radius:8px;background:#13181d;}
-    .elvax-video-compare-pro .generation-comparison.has-rows.before-active {background-image:linear-gradient(to right,#39b98116 0 50%,transparent 50% 100%);}
-    .elvax-video-compare-pro .generation-comparison.has-rows.after-active {background-image:linear-gradient(to right,transparent 0 50%,#39b98116 50% 100%);}
-    .elvax-video-compare-pro .generation-comparison.has-rows::before {content:"";position:absolute;top:0;bottom:0;left:50%;width:1px;background:#ffffff24;pointer-events:none;}
-    .elvax-video-compare-pro .generation-comparison.before-active .generation-columns > :first-child,.elvax-video-compare-pro .generation-comparison.before-active .generation-value:first-child,.elvax-video-compare-pro .generation-comparison.after-active .generation-columns > :last-child,.elvax-video-compare-pro .generation-comparison.after-active .generation-value:last-child {color:#91dbb6;}
-    .elvax-video-compare-pro .generation-columns,.elvax-video-compare-pro .generation-values {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));}
-    .elvax-video-compare-pro .generation-columns {min-height:32px;padding:7px 0;box-sizing:border-box;background:#ffffff04;color:#c1ccd5;font-size:11px;letter-spacing:.01em;border-bottom:1px solid #ffffff18;}
-    .elvax-video-compare-pro .generation-columns .generation-heading {display:flex;align-items:center;font-size:inherit;font-weight:600;color:inherit;line-height:1.2;}
-    .elvax-video-compare-pro .generation-columns .generation-heading:first-child,.elvax-video-compare-pro .generation-value:first-child {padding-left:6px;padding-right:8px;}
-    .elvax-video-compare-pro .generation-columns .generation-heading:last-child,.elvax-video-compare-pro .generation-value:last-child {padding-left:8px;padding-right:6px;}
-    .elvax-video-compare-pro .generation-table {display:flex;flex-direction:column;}
-    .elvax-video-compare-pro .generation-row {min-width:0;padding:7px 0 8px;border-bottom:1px solid #ffffff14;}
-    .elvax-video-compare-pro .generation-name {width:50%;box-sizing:border-box;margin:0 0 3px;padding:0 8px 0 6px;color:#8d9aa7;font-size:10px;overflow-wrap:anywhere;}
-    .elvax-video-compare-pro .generation-value {min-width:0;overflow-wrap:anywhere;}
-    .elvax-video-compare-pro .generation-strength {color:#f2cf62;}
-    .elvax-video-compare-pro .generation-row.is-different .generation-value:last-child {color:#b9dcf3;}
-    .elvax-video-compare-pro .generation-empty {padding:12px;border:1px solid #ffffff0c;border-radius:5px;background:#ffffff03;color:#9aa6b1;}
-    .elvax-video-compare-pro .generation-controls {display:flex;align-items:center;margin-bottom:12px;color:#9da8b3;font-size:10px;}
-    .elvax-video-compare-pro .generation-controls label {display:flex;align-items:center;gap:6px;cursor:pointer;}
-    .elvax-video-compare-pro .generation-controls input {appearance:none;position:relative;flex:0 0 13px;width:13px;height:13px;margin:0;border:1px solid #65717b;border-radius:3px;background:#ffffff05;cursor:pointer;}
-    .elvax-video-compare-pro .generation-controls input:checked {border-color:#8bd4ff;background:#8bd4ff;}
-    .elvax-video-compare-pro .generation-controls input:checked::after {content:"";position:absolute;left:4px;top:1px;width:3px;height:6px;border:solid #17232c;border-width:0 1.5px 1.5px 0;transform:rotate(45deg);}
-    .elvax-video-compare-pro .generation-controls input:focus-visible {box-shadow:0 0 0 2px #8bd4ff40;}
-    .elvax-video-compare-pro .caption-label {color:#bbb;transition:color .16s ease,text-shadow .16s ease;}
-    .elvax-video-compare-pro .caption-label {flex:0 0 auto;white-space:nowrap;}
-    .elvax-video-compare-pro .caption-after {grid-area:1 / 3;display:flex;align-items:center;justify-content:flex-end;gap:6px;}
-    .elvax-video-compare-pro .caption-label.is-active {color:#00ff78;text-shadow:0 0 8px #00ff7866;}
-    .elvax-video-compare-pro .caption-label.audio-source-hover {text-decoration:underline;text-decoration-color:#8bd4ffcc;text-decoration-thickness:1px;text-underline-offset:2px;}
-    .elvax-video-compare-pro .capture-control {display:flex;align-items:center;flex:1 1 0;min-width:0;overflow:hidden;border:1px solid #666;border-radius:4px;background:#333;}
-    .elvax-video-compare-pro .capture {flex:1 1 0;min-width:0;min-height:26px;padding:5px 6px;line-height:16px;border:0;background:transparent;}
-    .elvax-video-compare-pro .capture-auto {display:flex;flex:0 0 auto;align-items:center;gap:4px;padding:0 6px;cursor:pointer;color:#c1cbd3;font-size:10px;}
-    .elvax-video-compare-pro .capture-auto input {appearance:none;position:relative;width:11px;height:11px;margin:0;border:1px solid #86939f;border-radius:3px;background:#ffffff05;cursor:pointer;}
-    .elvax-video-compare-pro .capture-auto input:checked {border-color:#8bd4ff;background:#8bd4ff;}
-    .elvax-video-compare-pro .capture-auto input:checked::after {content:"";position:absolute;left:3px;top:1px;width:3px;height:5px;border:solid #17232c;border-width:0 1.5px 1.5px 0;transform:rotate(45deg);}
-    .elvax-video-compare-pro .capture-auto input:focus-visible {box-shadow:0 0 0 2px #8bd4ff40;}
-    .elvax-video-compare-pro .capture-control:has(.capture:not(:disabled)):hover {background:#444;}
-    .elvax-video-compare-pro .capture:disabled {cursor:default;}
-    .elvax-video-compare-pro .mode-row {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));flex:0 0 auto;gap:4px;padding:2px 8px;box-sizing:border-box;border-bottom:1px solid #ffffff12;}
-    .elvax-video-compare-pro .mode-cell {position:relative;min-width:0;}
-    .elvax-video-compare-pro .mode-button {display:flex;align-items:center;justify-content:center;width:100%;height:24px;padding:1px 8px;border:1px solid transparent;border-radius:6px;background:transparent;font-size:10px;line-height:16px;color:#929eaa;transition:background .15s,color .15s,border-color .15s;}
-    .elvax-video-compare-pro .mode-button.before-after-control {gap:4px;padding-left:2px;padding-right:2px;}
-    .elvax-video-compare-pro .before-after-option {font-size:inherit;color:#929eaa;transition:color .15s;}
-    .elvax-video-compare-pro .before-after-option.is-current {color:#d6ecff;}
-    .elvax-video-compare-pro .before-after-switch {position:relative;flex:0 0 2em;width:2em;height:1.2em;box-sizing:border-box;border:0;border-radius:8em;background:#293541;box-shadow:inset 0 0 0 1px #68798a;}
-    .elvax-video-compare-pro .before-after-switch::after {content:"";position:absolute;top:50%;left:.2em;width:.8em;height:.8em;border-radius:50%;background:#d6ecff;transform:translateY(-50%);transition:transform .18s cubic-bezier(.2,.8,.2,1);}
-    .elvax-video-compare-pro .before-after-switch[data-side=after]::after {transform:translate(.8em,-50%);}
-    .elvax-video-compare-pro .before-after-switch[data-side=neutral] {background:#25282d;box-shadow:inset 0 0 0 1px #454b52;}
-    .elvax-video-compare-pro .before-after-arrows {position:absolute;left:50%;top:50%;display:none;width:1.4em;height:.9em;overflow:visible;transform:translate(-50%,-50%);}
-    .elvax-video-compare-pro .before-after-arrows path {fill:none;stroke:#9aa3ad;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
-    .elvax-video-compare-pro .before-after-switch[data-side=neutral]::after {display:none;}
-    .elvax-video-compare-pro .before-after-switch[data-side=neutral] .before-after-arrows {display:block;}
-    .elvax-video-compare-pro .mode-button:hover {background:#ffffff0c;color:#eee;}
-    .elvax-video-compare-pro .mode-button[aria-pressed=true] {background:#243749;border-color:#4c6a83;color:#d6ecff;}
-    .elvax-video-compare-pro .mode-button:disabled,.elvax-video-compare-pro .mode-button:disabled:hover,.elvax-video-compare-pro .mode-button:disabled[aria-pressed=true] {background:#242629;border-color:#3b3e42;color:#747a80;opacity:.6;cursor:default;}
-    .elvax-video-compare-pro .mode-button:disabled .before-after-option {color:#747a80;}
-    .elvax-video-compare-pro .mode-button:disabled .before-after-switch {background:#292c30;box-shadow:inset 0 0 0 1px #454b52;}
-    .elvax-video-compare-pro .mode-button:disabled .before-after-switch::after {background:#81878e;}
-    .elvax-video-compare-pro .mode-button:disabled .before-after-arrows path {stroke:#747a80;}
-    .elvax-video-compare-pro .transport button {display:flex;flex:0 0 24px;align-items:center;justify-content:center;width:24px;height:24px;padding:3px;background:transparent;border:0;border-radius:4px;}
-    .elvax-video-compare-pro .transport button:hover {background:#ffffff24;}
-    .elvax-video-compare-pro .transport button.audio-source {background:#8bd4ff16;box-shadow:inset 0 0 0 1px #8bd4ff40;color:#8bd4ff;font-size:11px;font-weight:600;}
-    .elvax-video-compare-pro .transport button.audio-source:disabled {cursor:default;}
-    .elvax-video-compare-pro .audio-control {display:flex;align-items:center;flex:0 0 auto;border:1px solid #8bd4ff40;border-radius:4px;background:#8bd4ff0b;}
-    .elvax-video-compare-pro .audio-control button.audio-source {background:transparent;box-shadow:none;}
-    .elvax-video-compare-pro .audio-control .capture-auto {padding:0 5px;}
-    .elvax-video-compare-pro:fullscreen .audio-control .capture-auto {font-size:14px;}
-    .elvax-video-compare-pro .transport {gap:4px;padding:4px 6px;}
-    .elvax-video-compare-pro .time {flex:0 0 auto;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:11px;}
-    .elvax-video-compare-pro .volume {flex:0 1 42px;width:42px;min-width:14px;}
-    .elvax-video-compare-pro input[type=range] {appearance:none;height:3px;margin:0;background:#888;cursor:pointer;min-width:0;}
-    .elvax-video-compare-pro input[type=range]::-webkit-slider-thumb {appearance:none;width:9px;height:9px;background:white;border-radius:50%;}
-    .elvax-video-compare-pro .blend-control {grid-area:1 / 2;position:relative;justify-self:center;width:100%;max-width:200px;min-width:0;height:15px;box-sizing:border-box;}
-    .elvax-video-compare-pro .blend-control::before {content:"";position:absolute;inset:0;border-radius:2px;background:linear-gradient(90deg,#8faabb26 var(--blend-fill,50%),#ffffff04 var(--blend-fill,50%));box-shadow:inset 0 -1px #ffffff18;transition:filter .15s;pointer-events:none;}
-    .elvax-video-compare-pro .blend-control::after {content:"";position:absolute;left:clamp(1px,var(--blend-fill,50%),calc(100% - 1px));top:4px;bottom:4px;width:1px;background:#b7cbd8;opacity:0;pointer-events:none;transition:opacity .15s;}
-    .elvax-video-compare-pro .blend-control:hover::before,.elvax-video-compare-pro .blend-control:focus-within::before {filter:brightness(1.4);}
-    .elvax-video-compare-pro .blend-control:hover::after,.elvax-video-compare-pro .blend-control:focus-within::after {opacity:1;}
-    .elvax-video-compare-pro input.blend[type=range] {position:absolute;inset:0;z-index:1;width:100%;height:100%;min-width:0;margin:0;background:transparent;cursor:ew-resize;touch-action:none;}
-    .elvax-video-compare-pro input.blend[type=range]::-webkit-slider-thumb {width:1px;height:1px;background:transparent;box-shadow:none;}
-    .elvax-video-compare-pro input.blend[type=range]::-moz-range-thumb {width:1px;height:1px;border:0;background:transparent;}
-    .elvax-video-compare-pro .blend-value {position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;color:#b8c6d0;font-size:9px;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap;}
-    .elvax-video-compare-pro .status:empty {display:none;}
-    .elvax-video-compare-pro:fullscreen {background:#111;padding:16px;box-sizing:border-box;--compare-gap:12px;}
-    .elvax-video-compare-pro:fullscreen .capture-row {display:none;}
-    .elvax-video-compare-pro:fullscreen .mode-row {padding:8px;gap:6px;}
-    .elvax-video-compare-pro:fullscreen .mode-row {width:100%;align-self:stretch;padding:8px max(8px,calc((100% - 960px)/2 + 8px));box-sizing:border-box;}
-    .elvax-video-compare-pro:fullscreen .mode-button {height:40px;padding:4px;font-size:clamp(16px,1.25vw,22px);line-height:1;}
-    .elvax-video-compare-pro:fullscreen .captions {--caption-inset:12px;font-size:clamp(16px,1.4vw,24px);line-height:1.4;padding-top:10px;padding-bottom:10px;}
-    .elvax-video-compare-pro:fullscreen .generation-panel {font-size:clamp(11px,.75vw,14px);}
-    .elvax-video-compare-pro:fullscreen .generation-open .media-row {grid-template-columns:minmax(0,1fr) 6px minmax(0,var(--generation-fullscreen-width,33.333333%));}
-    .elvax-video-compare-pro:fullscreen .generation-header {height:57px;min-height:57px;padding:4px 12px;}
-    .elvax-video-compare-pro:fullscreen .generation-header .generation-heading {font-size:clamp(15px,1vw,20px);}
-    .elvax-video-compare-pro:fullscreen .generation-count {padding:4px 8px;font-size:clamp(12px,.75vw,16px);}
-    .elvax-video-compare-pro:fullscreen .generation-controls {margin-bottom:16px;font-size:clamp(14px,.9vw,18px);}
-    .elvax-video-compare-pro:fullscreen .generation-controls label {gap:10px;}
-    .elvax-video-compare-pro:fullscreen .generation-controls input {flex-basis:18px;width:18px;height:18px;}
-    .elvax-video-compare-pro:fullscreen .generation-controls input:checked::after {left:5px;top:2px;width:5px;height:8px;}
-    .elvax-video-compare-pro:fullscreen .generation-toggle {flex-basis:48px;width:48px;height:48px;padding:8px;}
-    .elvax-video-compare-pro:fullscreen .generation-icon {width:28px;height:28px;flex-basis:28px;}
-    .elvax-video-compare-pro:fullscreen .generation-content {padding:12px;}
-    .elvax-video-compare-pro:fullscreen .media-row {width:100%;}
-    .elvax-video-compare-pro:fullscreen .blend-value {font-size:clamp(13px,1vw,16px);}
-    .elvax-video-compare-pro:fullscreen .blend-control {height:30px;max-width:240px;}
-    .elvax-video-compare-pro:fullscreen .video-panel,.elvax-video-compare-pro:fullscreen .status {width:100%;}
-    .elvax-video-compare-pro:fullscreen .transport {gap:4px;padding:8px 6px;}
-    .elvax-video-compare-pro:fullscreen .transport button {flex-basis:36px;width:36px;height:44px;}
-    .elvax-video-compare-pro:fullscreen .transport button svg {width:30px;height:30px;}
-    .elvax-video-compare-pro:fullscreen .transport button.audio-source {font-size:18px;}
-    .elvax-video-compare-pro:fullscreen .time {font-size:14px;}
-    .elvax-video-compare-pro:fullscreen .volume {flex-basis:84px;width:84px;}
-    .elvax-video-compare-pro:fullscreen input[type=range] {height:5px;}
-    .elvax-video-compare-pro:fullscreen input[type=range]::-webkit-slider-thumb {width:12px;height:12px;}
-    .elvax-video-compare-pro:fullscreen input[type=range]::-moz-range-thumb {width:12px;height:12px;background:white;border:0;border-radius:50%;}
-    .elvax-video-compare-pro:fullscreen input.blend[type=range] {height:100%;}
-    .elvax-video-compare-pro:fullscreen input.blend[type=range]::-webkit-slider-thumb {width:1px;height:1px;background:transparent;}
-    .elvax-video-compare-pro:fullscreen input.blend[type=range]::-moz-range-thumb {width:1px;height:1px;background:transparent;}
-    .elvax-video-compare-pro:fullscreen input.blend[type=range] {background-size:100% 5px;}
-    .elvax-video-compare-pro:fullscreen .time-seek {background-size:100% 5px !important;}
+    .elvax-media-compare-pro .generation-content {display:block;flex:1;min-height:0;overflow:auto;padding:12px;scrollbar-width:thin;scrollbar-color:#ffffff26 transparent;}
+    .elvax-media-compare-pro .generation-comparison {position:relative;margin-top:12px;overflow:hidden;border:1px solid #ffffff12;border-radius:8px;background:#13181d;}
+    .elvax-media-compare-pro .generation-comparison.has-rows.before-active {background-image:linear-gradient(to right,#39b98116 0 50%,transparent 50% 100%);}
+    .elvax-media-compare-pro .generation-comparison.has-rows.after-active {background-image:linear-gradient(to right,transparent 0 50%,#39b98116 50% 100%);}
+    .elvax-media-compare-pro .generation-comparison.has-rows::before {content:"";position:absolute;top:0;bottom:0;left:50%;width:1px;background:#ffffff24;pointer-events:none;}
+    .elvax-media-compare-pro .generation-comparison.before-active .generation-columns > :first-child,.elvax-media-compare-pro .generation-comparison.before-active .generation-value:first-child,.elvax-media-compare-pro .generation-comparison.after-active .generation-columns > :last-child,.elvax-media-compare-pro .generation-comparison.after-active .generation-value:last-child {color:#91dbb6;}
+    .elvax-media-compare-pro .generation-columns,.elvax-media-compare-pro .generation-values {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));}
+    .elvax-media-compare-pro .generation-columns {min-height:32px;padding:7px 0;box-sizing:border-box;background:#ffffff04;color:#c1ccd5;font-size:11px;letter-spacing:.01em;border-bottom:1px solid #ffffff18;}
+    .elvax-media-compare-pro .generation-columns .generation-heading {display:flex;align-items:center;font-size:inherit;font-weight:600;color:inherit;line-height:1.2;}
+    .elvax-media-compare-pro .generation-columns .generation-heading:first-child,.elvax-media-compare-pro .generation-value:first-child {padding-left:6px;padding-right:8px;}
+    .elvax-media-compare-pro .generation-columns .generation-heading:last-child,.elvax-media-compare-pro .generation-value:last-child {padding-left:8px;padding-right:6px;}
+    .elvax-media-compare-pro .generation-table {display:flex;flex-direction:column;}
+    .elvax-media-compare-pro .generation-row {min-width:0;padding:7px 0 8px;border-bottom:1px solid #ffffff14;}
+    .elvax-media-compare-pro .generation-name {width:50%;box-sizing:border-box;margin:0 0 3px;padding:0 8px 0 6px;color:#8d9aa7;font-size:10px;overflow-wrap:anywhere;}
+    .elvax-media-compare-pro .generation-value {min-width:0;overflow-wrap:anywhere;}
+    .elvax-media-compare-pro .generation-strength {color:#f2cf62;}
+    .elvax-media-compare-pro .generation-row.is-different .generation-value:last-child {color:#b9dcf3;}
+    .elvax-media-compare-pro .generation-empty {padding:12px;border:1px solid #ffffff0c;border-radius:5px;background:#ffffff03;color:#9aa6b1;}
+    .elvax-media-compare-pro .generation-controls {display:flex;align-items:center;margin-bottom:12px;color:#9da8b3;font-size:10px;}
+    .elvax-media-compare-pro .generation-controls label {display:flex;align-items:center;gap:6px;cursor:pointer;}
+    .elvax-media-compare-pro .generation-controls input {appearance:none;position:relative;flex:0 0 13px;width:13px;height:13px;margin:0;border:1px solid #65717b;border-radius:3px;background:#ffffff05;cursor:pointer;}
+    .elvax-media-compare-pro .generation-controls input:checked {border-color:#8bd4ff;background:#8bd4ff;}
+    .elvax-media-compare-pro .generation-controls input:checked::after {content:"";position:absolute;left:4px;top:1px;width:3px;height:6px;border:solid #17232c;border-width:0 1.5px 1.5px 0;transform:rotate(45deg);}
+    .elvax-media-compare-pro .generation-controls input:focus-visible {box-shadow:0 0 0 2px #8bd4ff40;}
+    .elvax-media-compare-pro .caption-label {color:#bbb;transition:color .16s ease,text-shadow .16s ease;}
+    .elvax-media-compare-pro .caption-label {flex:0 0 auto;white-space:nowrap;}
+    .elvax-media-compare-pro .caption-after {grid-area:1 / 3;display:flex;align-items:center;justify-content:flex-end;gap:6px;}
+    .elvax-media-compare-pro .caption-label.is-active {color:#00ff78;text-shadow:0 0 8px #00ff7866;}
+    .elvax-media-compare-pro .caption-label.audio-source-hover {text-decoration:underline;text-decoration-color:#8bd4ffcc;text-decoration-thickness:1px;text-underline-offset:2px;}
+    .elvax-media-compare-pro .capture-control {display:flex;align-items:center;flex:1 1 0;min-width:0;overflow:hidden;border:1px solid #666;border-radius:4px;background:#333;}
+    .elvax-media-compare-pro .capture {flex:1 1 0;min-width:0;min-height:26px;padding:5px 6px;line-height:16px;border:0;background:transparent;}
+    .elvax-media-compare-pro .capture-auto {display:flex;flex:0 0 auto;align-items:center;gap:4px;padding:0 6px;cursor:pointer;color:#c1cbd3;font-size:10px;}
+    .elvax-media-compare-pro .capture-auto input {appearance:none;position:relative;width:11px;height:11px;margin:0;border:1px solid #86939f;border-radius:3px;background:#ffffff05;cursor:pointer;}
+    .elvax-media-compare-pro .capture-auto input:checked {border-color:#8bd4ff;background:#8bd4ff;}
+    .elvax-media-compare-pro .capture-auto input:checked::after {content:"";position:absolute;left:3px;top:1px;width:3px;height:5px;border:solid #17232c;border-width:0 1.5px 1.5px 0;transform:rotate(45deg);}
+    .elvax-media-compare-pro .capture-auto input:focus-visible {box-shadow:0 0 0 2px #8bd4ff40;}
+    .elvax-media-compare-pro .capture-control:has(.capture:not(:disabled)):hover {background:#444;}
+    .elvax-media-compare-pro .capture:disabled {cursor:default;}
+    .elvax-media-compare-pro .mode-row {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));flex:0 0 auto;gap:4px;padding:2px 8px;box-sizing:border-box;border-bottom:1px solid #ffffff12;}
+    .elvax-media-compare-pro .mode-cell {position:relative;min-width:0;}
+    .elvax-media-compare-pro .mode-button {display:flex;align-items:center;justify-content:center;width:100%;height:24px;padding:1px 8px;border:1px solid transparent;border-radius:6px;background:transparent;font-size:10px;line-height:16px;color:#929eaa;transition:background .15s,color .15s,border-color .15s;}
+    .elvax-media-compare-pro .mode-button.before-after-control {gap:4px;padding-left:2px;padding-right:2px;}
+    .elvax-media-compare-pro .before-after-option {font-size:inherit;color:#929eaa;transition:color .15s;}
+    .elvax-media-compare-pro .before-after-option.is-current {color:#d6ecff;}
+    .elvax-media-compare-pro .before-after-switch {position:relative;flex:0 0 2em;width:2em;height:1.2em;box-sizing:border-box;border:0;border-radius:8em;background:#293541;box-shadow:inset 0 0 0 1px #68798a;}
+    .elvax-media-compare-pro .before-after-switch::after {content:"";position:absolute;top:50%;left:.2em;width:.8em;height:.8em;border-radius:50%;background:#d6ecff;transform:translateY(-50%);transition:transform .18s cubic-bezier(.2,.8,.2,1);}
+    .elvax-media-compare-pro .before-after-switch[data-side=after]::after {transform:translate(.8em,-50%);}
+    .elvax-media-compare-pro .before-after-switch[data-side=neutral] {background:#25282d;box-shadow:inset 0 0 0 1px #454b52;}
+    .elvax-media-compare-pro .before-after-arrows {position:absolute;left:50%;top:50%;display:none;width:1.4em;height:.9em;overflow:visible;transform:translate(-50%,-50%);}
+    .elvax-media-compare-pro .before-after-arrows path {fill:none;stroke:#9aa3ad;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+    .elvax-media-compare-pro .before-after-switch[data-side=neutral]::after {display:none;}
+    .elvax-media-compare-pro .before-after-switch[data-side=neutral] .before-after-arrows {display:block;}
+    .elvax-media-compare-pro .mode-button:hover {background:#ffffff0c;color:#eee;}
+    .elvax-media-compare-pro .mode-button[aria-pressed=true] {background:#243749;border-color:#4c6a83;color:#d6ecff;}
+    .elvax-media-compare-pro .mode-button:disabled,.elvax-media-compare-pro .mode-button:disabled:hover,.elvax-media-compare-pro .mode-button:disabled[aria-pressed=true] {background:#242629;border-color:#3b3e42;color:#747a80;opacity:.6;cursor:default;}
+    .elvax-media-compare-pro .mode-button:disabled .before-after-option {color:#747a80;}
+    .elvax-media-compare-pro .mode-button:disabled .before-after-switch {background:#292c30;box-shadow:inset 0 0 0 1px #454b52;}
+    .elvax-media-compare-pro .mode-button:disabled .before-after-switch::after {background:#81878e;}
+    .elvax-media-compare-pro .mode-button:disabled .before-after-arrows path {stroke:#747a80;}
+    .elvax-media-compare-pro .transport button {display:flex;flex:0 0 24px;align-items:center;justify-content:center;width:24px;height:24px;padding:3px;background:transparent;border:0;border-radius:4px;}
+    .elvax-media-compare-pro .transport button:hover {background:#ffffff24;}
+    .elvax-media-compare-pro .transport button.audio-source {background:#8bd4ff16;box-shadow:inset 0 0 0 1px #8bd4ff40;color:#8bd4ff;font-size:11px;font-weight:600;}
+    .elvax-media-compare-pro .transport button.audio-source:disabled {cursor:default;}
+    .elvax-media-compare-pro .transport button:disabled {color:#747a80 !important;background:#242629;box-shadow:none;cursor:default;}
+    .elvax-media-compare-pro .transport:has(button[aria-label="Play / pause"]:disabled) .time {color:#747a80;}
+    .elvax-media-compare-pro .transport input:disabled {opacity:.4;cursor:default;filter:grayscale(1);}
+    .elvax-media-compare-pro .audio-control:has(.audio-source:disabled) {border-color:#454b52;background:#ffffff05;}
+    .elvax-media-compare-pro .capture-auto:has(input:disabled) {color:#747a80;cursor:default;}
+    .elvax-media-compare-pro .capture-auto input:disabled {cursor:default;}
+
+    .elvax-media-compare-pro .audio-control {display:flex;align-items:center;flex:0 0 auto;border:1px solid #8bd4ff40;border-radius:4px;background:#8bd4ff0b;}
+    .elvax-media-compare-pro .audio-control button.audio-source {background:transparent;box-shadow:none;}
+    .elvax-media-compare-pro .audio-control .capture-auto {padding:0 5px;}
+    .elvax-media-compare-pro:fullscreen .audio-control .capture-auto {font-size:14px;}
+    .elvax-media-compare-pro .transport {gap:4px;padding:4px 6px;}
+    .elvax-media-compare-pro .time {flex:0 0 auto;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:11px;}
+    .elvax-media-compare-pro .volume {flex:0 1 42px;width:42px;min-width:14px;}
+    .elvax-media-compare-pro input[type=range] {appearance:none;height:3px;margin:0;background:#888;cursor:pointer;min-width:0;}
+    .elvax-media-compare-pro input[type=range]::-webkit-slider-thumb {appearance:none;width:9px;height:9px;background:white;border-radius:50%;}
+    .elvax-media-compare-pro .blend-control {grid-area:1 / 2;position:relative;justify-self:center;width:100%;max-width:200px;min-width:0;height:15px;box-sizing:border-box;}
+    .elvax-media-compare-pro .blend-control::before {content:"";position:absolute;inset:0;border-radius:2px;background:linear-gradient(90deg,#8faabb26 var(--blend-fill,50%),#ffffff04 var(--blend-fill,50%));box-shadow:inset 0 -1px #ffffff18;transition:filter .15s;pointer-events:none;}
+    .elvax-media-compare-pro .blend-control::after {content:"";position:absolute;left:clamp(1px,var(--blend-fill,50%),calc(100% - 1px));top:4px;bottom:4px;width:1px;background:#b7cbd8;opacity:0;pointer-events:none;transition:opacity .15s;}
+    .elvax-media-compare-pro .blend-control:hover::before,.elvax-media-compare-pro .blend-control:focus-within::before {filter:brightness(1.4);}
+    .elvax-media-compare-pro .blend-control:hover::after,.elvax-media-compare-pro .blend-control:focus-within::after {opacity:1;}
+    .elvax-media-compare-pro input.blend[type=range] {position:absolute;inset:0;z-index:1;width:100%;height:100%;min-width:0;margin:0;background:transparent;cursor:ew-resize;touch-action:none;}
+    .elvax-media-compare-pro input.blend[type=range]::-webkit-slider-thumb {width:1px;height:1px;background:transparent;box-shadow:none;}
+    .elvax-media-compare-pro input.blend[type=range]::-moz-range-thumb {width:1px;height:1px;border:0;background:transparent;}
+    .elvax-media-compare-pro .blend-value {position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;color:#b8c6d0;font-size:9px;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap;}
+    .elvax-media-compare-pro .status:empty {display:none;}
+    .elvax-media-compare-pro:fullscreen {background:#111;padding:16px;box-sizing:border-box;--compare-gap:12px;}
+    .elvax-media-compare-pro:fullscreen .capture-row {display:none;}
+    .elvax-media-compare-pro:fullscreen .mode-row {padding:8px;gap:6px;}
+    .elvax-media-compare-pro:fullscreen .mode-row {width:100%;align-self:stretch;padding:8px max(8px,calc((100% - 960px)/2 + 8px));box-sizing:border-box;}
+    .elvax-media-compare-pro:fullscreen .mode-button {height:40px;padding:4px;font-size:clamp(16px,1.25vw,22px);line-height:1;}
+    .elvax-media-compare-pro:fullscreen .captions {--caption-inset:12px;font-size:clamp(16px,1.4vw,24px);line-height:1.4;padding-top:10px;padding-bottom:10px;}
+    .elvax-media-compare-pro:fullscreen .generation-panel {font-size:clamp(11px,.75vw,14px);}
+    .elvax-media-compare-pro:fullscreen .generation-open .media-row {grid-template-columns:minmax(0,1fr) 6px minmax(0,var(--generation-fullscreen-width,33.333333%));}
+    .elvax-media-compare-pro:fullscreen .generation-header {height:57px;min-height:57px;padding:4px 12px;}
+    .elvax-media-compare-pro:fullscreen .generation-header .generation-heading {font-size:clamp(15px,1vw,20px);}
+    .elvax-media-compare-pro:fullscreen .generation-count {padding:4px 8px;font-size:clamp(12px,.75vw,16px);}
+    .elvax-media-compare-pro:fullscreen .generation-controls {margin-bottom:16px;font-size:clamp(14px,.9vw,18px);}
+    .elvax-media-compare-pro:fullscreen .generation-controls label {gap:10px;}
+    .elvax-media-compare-pro:fullscreen .generation-controls input {flex-basis:18px;width:18px;height:18px;}
+    .elvax-media-compare-pro:fullscreen .generation-controls input:checked::after {left:5px;top:2px;width:5px;height:8px;}
+    .elvax-media-compare-pro:fullscreen .generation-toggle {flex-basis:48px;width:48px;height:48px;padding:8px;}
+    .elvax-media-compare-pro:fullscreen .generation-icon {width:28px;height:28px;flex-basis:28px;}
+    .elvax-media-compare-pro:fullscreen .generation-content {padding:12px;}
+    .elvax-media-compare-pro:fullscreen .media-row {width:100%;}
+    .elvax-media-compare-pro:fullscreen .blend-value {font-size:clamp(13px,1vw,16px);}
+    .elvax-media-compare-pro:fullscreen .blend-control {height:30px;max-width:240px;}
+    .elvax-media-compare-pro:fullscreen .video-panel,.elvax-media-compare-pro:fullscreen .status {width:100%;}
+    .elvax-media-compare-pro .audio-display {container-type:size;gap:0;}
+    .elvax-media-compare-pro .audio-letter {font-size:min(42cqw,48cqh);font-weight:600;line-height:1;}
+    .elvax-media-compare-pro .audio-name {font-size:min(6cqw,7cqh);line-height:1.2;margin-top:min(3cqw,4cqh);color:#93a1ad;}
+    .elvax-media-compare-pro:fullscreen .transport {gap:4px;padding:8px 6px;}
+    .elvax-media-compare-pro:fullscreen .transport button {flex-basis:36px;width:36px;height:44px;}
+    .elvax-media-compare-pro:fullscreen .transport button svg {width:30px;height:30px;}
+    .elvax-media-compare-pro:fullscreen .transport button.audio-source {font-size:18px;}
+    .elvax-media-compare-pro:fullscreen .time {font-size:14px;}
+    .elvax-media-compare-pro:fullscreen .volume {flex-basis:84px;width:84px;}
+    .elvax-media-compare-pro:fullscreen input[type=range] {height:5px;}
+    .elvax-media-compare-pro:fullscreen input[type=range]::-webkit-slider-thumb {width:12px;height:12px;}
+    .elvax-media-compare-pro:fullscreen input[type=range]::-moz-range-thumb {width:12px;height:12px;background:white;border:0;border-radius:50%;}
+    .elvax-media-compare-pro:fullscreen input.blend[type=range] {height:100%;}
+    .elvax-media-compare-pro:fullscreen input.blend[type=range]::-webkit-slider-thumb {width:1px;height:1px;background:transparent;}
+    .elvax-media-compare-pro:fullscreen input.blend[type=range]::-moz-range-thumb {width:1px;height:1px;background:transparent;}
+    .elvax-media-compare-pro:fullscreen input.blend[type=range] {background-size:100% 5px;}
+    .elvax-media-compare-pro:fullscreen .time-seek {background-size:100% 5px !important;}
   `;
   const buttons = document.createElement("div");
   buttons.className = "capture-row";
@@ -271,9 +298,9 @@ function install(node) {
   const modeButtons = new Map();
   const modeCells = new Map();
   for (const [mode, label, title] of [
-    ["split", "Slider", "Hover over the video to compare Before on the left and After on the right."],
+    ["split", "Slider", "Hover over the comparison to show Before on the left and After on the right."],
     ["overlay", "Before/After", "Toggle between showing Before and After. Use the Overlay slider to blend them."],
-    ["side-by-side", "Side by Side", "Show both complete videos beside each other."],
+    ["side-by-side", "Side by Side", "Show Before and After side by side."],
   ]) {
     const button = document.createElement("button");
     button.type = "button";
@@ -293,6 +320,10 @@ function install(node) {
         const alreadySelected = state().mode === "overlay";
         state().mode = "overlay";
         state().blend = alreadySelected && state().blend <= 0.5 ? 1 : 0;
+        if (audioOnly()) {
+          state().audioSource = state().blend === 1 ? "after" : "before";
+          applyAudio(true);
+        }
       } else {
         state().mode = mode;
       }
@@ -346,11 +377,19 @@ function install(node) {
   const emptyHint = document.createElement("div");
   emptyHint.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:20px;text-align:center;pointer-events:none;color:#aeb8c1;font-size:12px;line-height:1.5;";
   const emptyTitle = document.createElement("div");
-  emptyTitle.textContent = "Drag and drop videos here, or connect video inputs and click Load.";
+  emptyTitle.textContent = "Drag and drop media here, or connect inputs and click Load.";
   const emptyDetail = document.createElement("div");
   emptyDetail.textContent = "Drop left for Before · Drop right for After";
   emptyDetail.style.cssText = "font-size:10px;color:#77838e;";
   emptyHint.append(emptyTitle, emptyDetail);
+  const audioDisplay = document.createElement("div");
+  audioDisplay.className = "audio-display";
+  audioDisplay.style.cssText = "position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;color:#cbd5df;pointer-events:none;";
+  const audioLetter = document.createElement("div");
+  audioLetter.className = "audio-letter";
+  const audioName = document.createElement("div");
+  audioName.className = "audio-name";
+  audioDisplay.append(audioLetter, audioName);
   stage.className = "stage";
   stage.tabIndex = 0;
   stage.style.cssText = "position:relative;display:flex;align-items:center;justify-content:center;flex:1;min-height:0;overflow:hidden;background:#111;outline:none;";
@@ -367,6 +406,7 @@ function install(node) {
     frameIntervals.set(video, 1 / 30);
   }
   const [before, after] = videos;
+  const stillImages = videos.map(() => new Image());
   const frameSurfaces = videos.map(() => {
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = 0;
@@ -379,7 +419,7 @@ function install(node) {
   message.className = "status";
   message.style.cssText = "flex:0 0 auto;box-sizing:border-box;padding:6px 8px;border:1px solid #ffffff24;border-radius:6px;background:#111d;text-align:center;color:#aaa;overflow-wrap:anywhere;";
   function updateStatus() {
-    message.textContent = [...Object.values(uploadStatus), audioUnavailable ? "Audio unavailable. Video playback is still available." : ""].filter(Boolean).join(" · ");
+    message.textContent = [incompatible() ? "Compare audio with audio only." : "", ...Object.values(uploadStatus), audioUnavailable ? "Audio unavailable." : ""].filter(Boolean).join(" · ");
   }
   const captions = document.createElement("div");
   captions.className = "captions";
@@ -678,7 +718,7 @@ function install(node) {
     if (!shownRows.length) {
       const empty = document.createElement("div");
       empty.className = "generation-empty";
-      empty.textContent = rows.length ? "No differences found in available metadata." : "Generation settings are unavailable for one or both videos.";
+      empty.textContent = rows.length ? "No differences found in available metadata." : "Generation settings are unavailable for one or both files.";
       generationTable.append(empty);
     }
     generationControls.style.display = rows.length ? "flex" : "none";
@@ -729,7 +769,7 @@ function install(node) {
   seek.max = "0";
   seek.step = ".001";
   seek.value = "0";
-  seek.title = "Seek both videos";
+  seek.title = "Seek media";
   seek.style.cssText = "flex:1 1 0;width:0;min-width:10px;height:12px;background:linear-gradient(#888,#888) center / 100% 3px no-repeat;";
   transport.append(time, seek);
   const mute = iconButton(transport, "Mute / unmute audio", ["M11 5L6 9H3v6h3l5 4z", "M16 9l5 6M21 9l-5 6"], () => {
@@ -746,6 +786,7 @@ function install(node) {
     audioAuto.checked = false;
     state().audioSource = audioVideo() === after ? "before" : "after";
     applyAudio(true);
+    if (audioOnly()) updateView();
     node.graph?.change();
   });
   const audioControl = document.createElement("div");
@@ -782,6 +823,8 @@ function install(node) {
 
   function primary() { return state().before ? before : after; }
   function audioVideo() {
+    const active = videos.filter(video => video.hasAttribute("src"));
+    if (active.length === 1) return active[0];
     if (state().audioSource === "after" && state().after) return after;
     if (state().audioSource === "before" && state().before) return before;
     if (state().before && inputKey(node, "before")) return before;
@@ -818,8 +861,10 @@ function install(node) {
     mute.setAttribute("aria-label", mute.title);
     mute.querySelectorAll("path")[1].setAttribute("d", muted ? "M16 9l5 6M21 9l-5 6" : "M16 8a6 6 0 0 1 0 8M19 5a10 10 0 0 1 0 14");
     audioSource.textContent = source === "after" ? "A" : "B";
-    audioSource.disabled = audioUnavailable || !state().before || !state().after;
-    audioAuto.disabled = audioUnavailable;
+    audioSource.disabled = audioUnavailable || videos.filter(video => video.hasAttribute("src")).length < 2;
+    audioAutoLabel.style.display = audioOnly() ? "none" : "";
+    audioAuto.disabled = audioUnavailable || videos.filter(video => video.hasAttribute("src")).length < 2;
+    mute.disabled = volume.disabled = !videos.some(video => video.hasAttribute("src"));
     audioSource.title = `Audio: ${source === "after" ? "After (A)" : "Before (B)"}${audioSource.disabled ? "" : `. Click to switch to ${source === "after" ? "Before (B)" : "After (A)"}`}.`;
     audioSource.setAttribute("aria-label", audioSource.title);
     updateAudioCaptionHover();
@@ -869,7 +914,7 @@ function install(node) {
     tone.stop(now + .010);
   }
   function updateAutoAudio(feedback = false) {
-    if (!state().audioAuto || !state().before || !state().after) return;
+    if ((!state().audioAuto && !audioOnly()) || !state().before || !state().after) return;
     let source = null;
     if (state().mode === "split") {
       if (state().position === 100) source = "before";
@@ -893,14 +938,14 @@ function install(node) {
     const height = stage.clientHeight;
     if (!width || !height) return { x: 0, y: 0, width, height };
     const bounds = videos.flatMap((video, index) => {
-      if (!video.hasAttribute("src") || !video.videoWidth || !video.videoHeight) return [];
       const surface = frameSurfaces[index];
+      if (!surface.width || !surface.height) return [];
       const boxWidth = surface.clientWidth;
       const boxHeight = surface.clientHeight;
       if (!boxWidth || !boxHeight) return [];
-      const scale = Math.min(boxWidth / video.videoWidth, boxHeight / video.videoHeight);
-      const contentWidth = video.videoWidth * scale;
-      const contentHeight = video.videoHeight * scale;
+      const scale = Math.min(boxWidth / surface.width, boxHeight / surface.height);
+      const contentWidth = surface.width * scale;
+      const contentHeight = surface.height * scale;
       return [{ x: surface.offsetLeft + (boxWidth - contentWidth) / 2,
         y: surface.offsetTop + (boxHeight - contentHeight) / 2,
         width: contentWidth, height: contentHeight }];
@@ -954,8 +999,17 @@ function install(node) {
     delete state().singleView;
     delete state().splitDirection;
     state().blend ??= .5;
-    const mode = state().mode;
+    let mode = state().mode;
     const both = Boolean(state().before && state().after);
+    if (audioOnly()) {
+      state().mode = "overlay";
+      state().blend = state().audioSource === "after" ? 1 : 0;
+    }
+    modes.style.gridTemplateColumns = audioOnly() ? "minmax(0,1fr)" : "";
+    audioDisplay.style.display = audioOnly() && !incompatible() ? "flex" : "none";
+    audioLetter.textContent = state().audioSource === "after" ? "A" : "B";
+    audioName.textContent = state().audioSource === "after" ? "After" : "Before";
+    mode = state().mode;
     const split = both && mode === "split";
     const sideBySide = both && mode === "side-by-side";
     const layoutStyle = sideBySide
@@ -965,7 +1019,7 @@ function install(node) {
     before.style.display = state().before ? "block" : "none";
     frameSurfaces[0].style.display = state().before ? "block" : "none";
     frameSurfaces[1].style.display = state().after ? "block" : "none";
-    afterClip.style.display = sideBySide ? "contents" : state().after ? "block" : "none";
+    afterClip.style.display = audioOnly() ? "none" : sideBySide ? "contents" : state().after ? "block" : "none";
     afterClip.style.left = "0";
     afterClip.style.width = "100%";
     afterClip.style.clipPath = "none";
@@ -975,9 +1029,10 @@ function install(node) {
     stage.style.cursor = split ? "ew-resize" : "default";
     for (const [key, button] of modeButtons) {
       button.setAttribute("aria-pressed", String(key === mode));
-      button.disabled = !both;
+      modeCells.get(key).style.display = audioOnly() && key !== "overlay" ? "none" : "";
+      button.disabled = !both || incompatible();
     }
-    blendControl.style.display = mode === "overlay" ? "block" : "none";
+    blendControl.style.display = mode === "overlay" && !audioOnly() ? "block" : "none";
     captions.style.display = state().before || state().after ? "grid" : "none";
     blend.disabled = !both;
     blend.value = String(state().blend);
@@ -994,12 +1049,12 @@ function install(node) {
     beforeAfter.querySelector(".before-after-switch").dataset.side = beforeSelected ? "before" : afterSelected ? "after" : "neutral";
     beforeAfter.querySelector(".before-after-option-before").classList.toggle("is-current", beforeSelected);
     beforeAfter.querySelector(".before-after-option-after").classList.toggle("is-current", afterSelected);
-    beforeAfter.title = state().mode === "overlay"
+    beforeAfter.title = audioOnly() ? `Playing ${state().audioSource === "after" ? "After" : "Before"}. Click to switch audio.` : state().mode === "overlay"
       ? `Showing ${showing}. Click to switch to ${next}; use the Overlay slider to blend.`
       : "Click to show Before, then click again to switch to After. Use the Overlay slider to blend.";
     for (const [key, button] of modeButtons) {
       const title = button.disabled
-        ? "Connect sockets and load videos first"
+        ? "Load two media first"
         : key === "overlay" ? beforeAfter.title : button.dataset.enabledTitle;
       button.title = title;
       button.setAttribute("aria-label", title);
@@ -1012,9 +1067,11 @@ function install(node) {
     syncCaptionsToVideo();
   }
   function updateTime() {
+    playButton.disabled = seek.disabled = incompatible() || !videos.some(video => video.hasAttribute("src"));
     const duration = playbackDuration || comparisonDuration(videos);
     const active = videos.filter((video) => video.hasAttribute("src"));
     const ended = active.length && active.every((video) => video.ended);
+    if (audioOnly() && playing) state().time = playbackVideo().currentTime;
     const current = Math.min(pendingTimelineSeek ?? seekRenderTarget ?? (ended ? duration : renderedTime) ?? state().time ?? 0, duration);
     if (seek.max !== String(duration)) seek.max = String(duration);
     if (seek.value !== String(current)) seek.value = String(current);
@@ -1024,6 +1081,17 @@ function install(node) {
   function seekBoth(value, force = false) {
     const duration = playbackDuration || comparisonDuration(videos);
     const target = Math.max(0, duration ? Math.min(value, duration) : value);
+    if (audioOnly()) {
+      const resume = playing || playStarting;
+      if (resume) pause();
+      for (const video of videos) if (video.hasAttribute("src") && video.readyState >= 1) video.currentTime = Math.min(target, video.duration || target);
+      state().time = target;
+      renderedTime = null;
+      seekRenderTarget = null;
+      updateTime();
+      if (resume) play();
+      return;
+    }
     if (playing || playStarting) {
       pause();
       resumeAfterSeek = true;
@@ -1211,7 +1279,7 @@ function install(node) {
     else play();
   }
   async function play() {
-    if (playing || playStarting || disposed) return;
+    if (playing || playStarting || disposed || incompatible()) return;
     pendingFrameSteps = 0;
     frameStepInFlight = false;
     if (seekRenderTarget !== null || pendingTimelineSeek !== null) {
@@ -1238,7 +1306,8 @@ function install(node) {
     if (playbackDuration && playbackMaster.currentTime >= playbackDuration - Math.min(.025, playbackDuration / 2)) {
       resumeAfterSeek = true;
       seekBoth(0);
-      return;
+      if (!audioOnly()) return;
+      resumeAfterSeek = false;
     }
     const toPlay = ready.filter((video) => !video.ended);
     applyAudio();
@@ -1254,7 +1323,7 @@ function install(node) {
       pause();
       const failure = failed[0];
       if (failure.error?.name !== "AbortError") {
-        message.textContent = `Could not play the ${failure.video === before ? "Before" : "After"} video: ${failure.error?.message || "video unavailable"}`;
+        message.textContent = `Could not play the ${failure.video === before ? "Before" : "After"} media: ${failure.error?.message || "media unavailable"}`;
       }
     }
   }
@@ -1283,6 +1352,32 @@ function install(node) {
       const role = index ? "after" : "before";
       const entry = state()[role];
       const video = videos[index];
+      const image = stillImages[index];
+      if (entry?.media_type === "image" && entry.filename) {
+        if (video.hasAttribute("src")) {
+          video.removeAttribute("src");
+          video.load();
+        }
+        const url = mediaURL(entry);
+        const drawImage = () => {
+          if (disposed || state()[role] !== entry) return;
+          const canvas = frameSurfaces[index];
+          canvas.width = image.naturalWidth;
+          canvas.height = image.naturalHeight;
+          canvas.getContext("2d").drawImage(image, 0, 0);
+          updateView();
+        };
+        image.onload = drawImage;
+        image.onerror = () => {
+          if (!disposed && state()[role] === entry) message.textContent = `Could not load the ${index ? "After" : "Before"} image.`;
+        };
+        if (image.getAttribute("src") !== url) {
+          frameSurfaces[index].width = frameSurfaces[index].height = 0;
+          image.src = url;
+        } else if (image.complete && image.naturalWidth) drawImage();
+        continue;
+      }
+      image.removeAttribute("src");
       if (entry?.filename) {
         const url = mediaURL(entry);
         if (video.getAttribute("src") !== url) {
@@ -1305,7 +1400,7 @@ function install(node) {
     updateTime();
   }
   function captureFrame(video) {
-    if (disposed || video.error || video.seeking || video.readyState < 2 || !video.hasAttribute("src")) return;
+    if (disposed || !video.videoWidth || video.error || video.seeking || video.readyState < 2 || !video.hasAttribute("src")) return;
     const frame = new VideoFrame(video);
     const time = frame.timestamp / 1000000;
     if (frame.duration > 0) frameIntervals.set(video, frame.duration / 1000000);
@@ -1369,7 +1464,7 @@ function install(node) {
         pendingFrameSteps = 0;
         frameStepInFlight = false;
         seekRenderTarget = null;
-        message.textContent = `Could not load the ${video === before ? "Before" : "After"} video: ${video.error?.message || "video unavailable"}`;
+        message.textContent = `Could not load the ${video === before ? "Before" : "After"} media: ${video.error?.message || "media unavailable"}`;
       }
     });
   }
@@ -1479,20 +1574,26 @@ function install(node) {
       if (source.type === "LoadVideo") {
         const filename = source.widgets?.find((widget) => widget.name === "file")?.value;
         if (filename) entry = { filename, type: "input" };
-        else throw new Error("No video is available from the connected node yet.");
+        else throw new Error("No media is available from the connected node yet.");
       }
       if (source.type === "SaveVideo" || source.comfyClass === "SaveVideo") {
         const output = app.nodeOutputs?.[source.id]?.images?.findLast((video) => video.type === "output" && video.filename);
-        if (!output) throw new Error("No video is available from the connected node yet.");
+        if (!output) throw new Error("No media is available from the connected node yet.");
         entry = output;
       }
-      if (!entry) throw new Error(`No video is available from the ${role === "before" ? "Before" : "After"} socket.`);
-      const response = await api.fetchApi("/elvax/video-compare-pro/capture", {
+      if (source.type === "LoadImage" || source.type === "LoadAudio") {
+        const name = source.type === "LoadImage" ? "image" : "audio";
+        const filename = source.widgets?.find(widget => widget.name === name)?.value;
+        if (filename) entry = { filename, type: "input" };
+      }
+      if (!entry) entry = outputMediaEntry(source, inputSource(node, role)?.slot);
+      if (!entry) throw new Error(`Run the workflow once to prepare media from the ${role === "before" ? "Before" : "After"} input.`);
+      const response = await api.fetchApi("/elvax/media-compare-pro/capture", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(entry),
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Could not prepare the selected video.");
+      if (!response.ok) throw new Error(result.error || "Could not prepare the selected media.");
       if (disposed || request !== captureRequests[role] || key !== inputKey(node, role) || source !== inputNode(node, role)) return;
       state()[role] = result;
       state().time = 0;
@@ -1510,13 +1611,21 @@ function install(node) {
   dropOverlay.style.cssText = "position:absolute;inset:0;z-index:100;display:none;gap:6px;padding:6px;background:#111d;pointer-events:none;";
   const dropZones = ["before", "after"].map((role) => {
     const zone = document.createElement("div");
-    zone.textContent = `Drop ${role === "before" ? "Before" : "After"} video`;
-    zone.style.cssText = "flex:1;display:flex;align-items:center;justify-content:center;border:2px dashed #60707c;border-radius:8px;background:#20262eee;color:#c5d4df;font-size:16px;font-weight:600;";
+    const title = document.createElement("div");
+    title.textContent = `Drop ${role === "before" ? "Before" : "After"}`;
+    const formats = document.createElement("div");
+    formats.textContent = "Video, image, or audio";
+    formats.style.cssText = "font-size:12px;font-weight:400;color:#a7b8c5;";
+    const audioNote = document.createElement("div");
+    audioNote.textContent = "(Audio compares with audio only)";
+    audioNote.style.cssText = "font-size:11px;font-weight:400;color:#93a1ad;";
+    zone.append(title, formats, audioNote);
+    zone.style.cssText = "flex:1 1 0;min-width:0;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;text-align:center;overflow-wrap:anywhere;border:2px dashed #60707c;border-radius:8px;background:#20262eee;color:#c5d4df;font-size:16px;font-weight:600;";
     dropOverlay.append(zone);
     return zone;
   });
   root.append(dropOverlay);
-  const videoFile = (file) => /\.(mp4|webm|mov|mkv|avi|m4v)$/i.test(file.name);
+  const mediaFile = (file) => /\.(mp4|webm|mov|mkv|avi|m4v|png|jpe?g|webp|bmp|wav|flac|mp3|ogg|opus|m4a)$/i.test(file.name);
   const dropRole = (event) => event.clientX < root.getBoundingClientRect().left + root.getBoundingClientRect().width / 2 ? "before" : "after";
   root.addEventListener("dragover", (event) => {
     if (!event.dataTransfer?.types.includes("Files")) return;
@@ -1525,6 +1634,9 @@ function install(node) {
     event.dataTransfer.dropEffect = "copy";
     dropOverlay.style.display = "flex";
     dropZones.forEach((zone, index) => {
+      const role = index ? "after" : "before";
+      zone.firstElementChild.textContent = `${state()[role]?.filename ? "Replace" : "Drop"} ${index ? "After" : "Before"}`;
+      zone.children[1].textContent = "Video, image, or audio";
       const active = (dropRole(event) === "before" ? 0 : 1) === index;
       zone.style.borderColor = active ? "#8bd4ff" : "#60707c";
       zone.style.background = active ? "#294459ee" : "#20262eee";
@@ -1533,7 +1645,7 @@ function install(node) {
   root.addEventListener("dragleave", (event) => {
     if (!root.contains(event.relatedTarget)) dropOverlay.style.display = "none";
   });
-  async function uploadDroppedVideo(file, role) {
+  async function uploadDroppedMedia(file, role) {
     uploads.get(role)?.abort();
     const controller = new AbortController();
     uploads.set(role, controller);
@@ -1541,15 +1653,20 @@ function install(node) {
     const button = captureButtons.get(role);
     button.__elvaxLoading = true;
     button.disabled = true;
-    uploadStatus[role] = `Loading ${role === "before" ? "Before" : "After"} video…`;
+    uploadStatus[role] = `Loading ${role === "before" ? "Before" : "After"} file…`;
     updateStatus();
     try {
       const data = new FormData();
-      data.append("video", file);
-      const response = await api.fetchApi("/elvax/video-compare-pro/upload", { method: "POST", body: data, signal: controller.signal });
+      data.append("media", file);
+      const response = await api.fetchApi("/elvax/media-compare-pro/upload", { method: "POST", body: data, signal: controller.signal });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Could not load the dropped video.");
+      if (!response.ok) throw new Error(result.error || "Could not load the dropped file.");
       if (disposed || request !== captureRequests[role]) return;
+      const opposite = role === "before" ? "after" : "before";
+      const other = state()[opposite];
+      if (other && (other.media_type === "audio") !== (result.media_type === "audio")) {
+        state()[opposite] = null;
+      }
       state()[role] = result;
       state().time = 0;
       uploadStatus[role] = "";
@@ -1574,15 +1691,15 @@ function install(node) {
     event.preventDefault();
     event.stopPropagation();
     dropOverlay.style.display = "none";
-    const files = [...event.dataTransfer.files].filter(videoFile);
+    const files = [...event.dataTransfer.files].filter(mediaFile);
     if (!files.length) {
-      message.textContent = "Drop a video file (MP4, WebM, MOV, MKV, AVI, or M4V).";
+      message.textContent = "Drop a supported video, image, or audio file.";
       return;
     }
     if (files.length > 1) {
-      uploadDroppedVideo(files[0], "before");
-      uploadDroppedVideo(files[1], "after");
-    } else uploadDroppedVideo(files[0], dropRole(event));
+      uploadDroppedMedia(files[0], "before");
+      uploadDroppedMedia(files[1], "after");
+    } else uploadDroppedMedia(files[0], dropRole(event));
   });
   for (const role of ["before", "after"]) {
     const control = document.createElement("div");
@@ -1590,17 +1707,17 @@ function install(node) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "capture";
-    button.textContent = `Load : ${role === "before" ? "Before" : "After"} Video`;
-    button.title = `Load a video from the ${role}_video socket.`;
+    button.textContent = `Load : ${role === "before" ? "Before" : "After"} Input`;
+    button.title = `Connect media (video, image, or audio) to use as ${role === "before" ? "Before" : "After"}.`;
     button.addEventListener("click", () => capture(role, button));
     captureButtons.set(role, button);
     const autoLabel = document.createElement("label");
     autoLabel.className = "capture-auto";
-    autoLabel.title = `Automatically load the ${role === "before" ? "Before" : "After"} video when the workflow produces a result.`;
+    autoLabel.title = `Automatically load the ${role === "before" ? "Before" : "After"} media when the workflow produces a result.`;
     const auto = document.createElement("input");
     auto.type = "checkbox";
     auto.checked = Boolean(state()[`${role}Auto`]);
-    auto.setAttribute("aria-label", `Auto load ${role} video`);
+    auto.setAttribute("aria-label", `Auto load ${role} media`);
     auto.addEventListener("change", () => {
       state()[`${role}Auto`] = auto.checked;
       node.graph?.change();
@@ -1620,9 +1737,9 @@ function install(node) {
       const input = node.inputs?.[inputSlot(node, role)];
       const available = Boolean(inputNode(node, role));
       button.title = input?.link == null
-        ? `Connect a video output to the ${role}_video socket.`
-        : !available ? "The connected route is inactive or has no video source."
-        : `Load a video from the ${role}_video socket.`;
+        ? `Connect media (video, image, or audio) to use as ${role === "before" ? "Before" : "After"}.`
+        : !available ? "The connected route is inactive or has no media source."
+        : `Connect media (video, image, or audio) to use as ${role === "before" ? "Before" : "After"}.`;
       button.disabled = Boolean(button.__elvaxLoading) || !available;
     }
   }
@@ -1632,7 +1749,7 @@ function install(node) {
     const connected = arguments[2];
     const result = oldConnectionsChanged?.apply(this, arguments);
     if (connected && !state().audioAuto && state().audioSource == null) {
-      state().audioSource = this.inputs?.[slot]?.name === "after_video" ? "after" : "before";
+      state().audioSource = this.inputs?.[slot]?.name === "after" ? "after" : "before";
     }
     updateLoadButtons();
     updateView();
@@ -1684,10 +1801,10 @@ function install(node) {
       togglePlayback();
     }
   });
-  stage.append(before, frameSurfaces[0], afterClip, divider, emptyHint);
+  stage.append(before, frameSurfaces[0], afterClip, divider, emptyHint, audioDisplay);
   panel.append(modes, mediaRow, transport);
   root.append(style, buttons, panel, message);
-  const widget = node.addDOMWidget("video_compare_pro", "div", root, {
+  const widget = node.addDOMWidget("media_compare_pro", "div", root, {
     serialize: false, hideOnZoom: false, getMinHeight: () => MIN_HEIGHT,
   });
   widget.computeLayoutSize = () => ({ minHeight: MIN_HEIGHT, minWidth: 1 });
@@ -1741,7 +1858,7 @@ function install(node) {
     const result = oldSerialized?.apply(this, arguments);
     data.properties = {
       ...data.properties,
-      elvaxVideoComparePro: JSON.parse(JSON.stringify({
+      elvaxMediaComparePro: JSON.parse(JSON.stringify({
         ...state(),
         time: renderedTime ?? state().time ?? 0,
       })),
@@ -1760,8 +1877,8 @@ function install(node) {
     lastVisibleSide = null;
     lastAudioSource = null;
     const result = oldConfigured?.apply(this, arguments);
-    this.properties.elvaxVideoComparePro ||= { position: 50, volume: 1, muted: false, loop: true, audioSource: null };
-    this.properties.elvaxVideoComparePro = JSON.parse(JSON.stringify(this.properties.elvaxVideoComparePro));
+    this.properties.elvaxMediaComparePro ||= { position: 50, volume: 1, muted: false, loop: true, audioSource: null };
+    this.properties.elvaxMediaComparePro = JSON.parse(JSON.stringify(this.properties.elvaxMediaComparePro));
     generationOpen = Boolean(state().generationOpen);
     showMatching.checked = Boolean(state().showMatching);
     migrateAudioDefault();
@@ -1776,7 +1893,7 @@ function install(node) {
     const result = oldExecuted?.apply(this, arguments);
     let autoLoaded = false;
     for (const role of ["before", "after"]) {
-      const entry = data?.[`elvax_compare_pro_${role}_video`]?.[0];
+      const entry = data?.[`elvax_compare_pro_${role}_media`]?.[0];
       if (entry) {
         state()[`${role}Latest`] = entry;
         state()[`${role}LatestKey`] = inputKey(this, role);
@@ -1811,6 +1928,10 @@ function install(node) {
     pause();
     clearQueuedFrames();
     for (const canvas of frameSurfaces) canvas.width = canvas.height = 0;
+    for (const image of stillImages) {
+      image.onload = image.onerror = null;
+      image.removeAttribute("src");
+    }
     for (const video of videos) {
       video.cancelVideoFrameCallback(frameCallbacks.get(video));
       video.removeAttribute("src");
@@ -1822,7 +1943,7 @@ function install(node) {
 }
 
 app.registerExtension({
-  name: "Elvax.VideoComparePro",
+  name: "Elvax.MediaComparePro",
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== NODE_TYPE) return;
     const oldCreated = nodeType.prototype.onNodeCreated;

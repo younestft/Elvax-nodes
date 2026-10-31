@@ -4,3 +4,4 @@ __pycache__/
 tests/
 .playwright-cli/
 llm_turbo/vendor/
+llm_turbo/custom_builds/*

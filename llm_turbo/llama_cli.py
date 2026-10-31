@@ -4,7 +4,9 @@ from __future__ import annotations
 # Modified for Elvax LLM Turbo on 2026-09-24.
 
 import os
+from contextlib import ExitStack
 import re
+import signal
 import subprocess
 import tempfile
 import time
@@ -13,7 +15,7 @@ from pathlib import Path
 
 import comfy.model_management
 
-from .llama_binary import ensure_llama_cli_paths
+from .llama_binary import ensure_llama_cli_paths, binary_environment, clear_binary_cache
 
 
 PROMPT_ECHO_END = "... (truncated)"
@@ -53,18 +55,25 @@ def _tensor_to_temp_png(tensor) -> Path:
     pil_image = Image.fromarray(array)
     fd, path = tempfile.mkstemp(prefix="llm-text-processor-", suffix=".png")
     os.close(fd)
-    pil_image.save(path, format="PNG")
-    return Path(path)
+    path = Path(path)
+    with ExitStack() as cleanup:
+        cleanup.callback(path.unlink, missing_ok=True)
+        pil_image.save(path, format="PNG")
+        cleanup.pop_all()
+    return path
 
 
 def tensor_to_temp_pngs(images) -> list[Path]:
     paths = []
-    for image in _media_slot_values(images, "image"):
-        # ComfyUI IMAGE is normally B,H,W,C. Each batch item becomes one CLI image.
-        if hasattr(image, "dim") and image.dim() == 4:
-            paths.extend(_tensor_to_temp_png(tensor) for tensor in image)
-        else:
-            paths.append(_tensor_to_temp_png(image))
+    with ExitStack() as cleanup:
+        for image in _media_slot_values(images, "image"):
+            # ComfyUI IMAGE is B,H,W,C. Each batch item becomes one CLI image.
+            tensors = image if hasattr(image, "dim") and image.dim() == 4 else [image]
+            for tensor in tensors:
+                path = _tensor_to_temp_png(tensor)
+                cleanup.callback(path.unlink, missing_ok=True)
+                paths.append(path)
+        cleanup.pop_all()
     return paths
 
 
@@ -84,24 +93,27 @@ def audio_to_temp_wavs(audio) -> list[Path]:
     import numpy as np
 
     paths = []
-    for audio_item in _media_slot_values(audio, "audio"):
-        waveform = audio_item["waveform"]
-        waveforms = list(waveform) if waveform.dim() == 3 else [waveform]
-        sample_rate = int(audio_item["sample_rate"])
-        for item in waveforms:
-            samples = item.detach().cpu().float().numpy()
-            if samples.ndim == 1:
-                samples = samples[None, :]
-            pcm = (samples.T.clip(-1.0, 1.0) * 32767).astype("<i2")
-            fd, path = tempfile.mkstemp(prefix="llm-turbo-audio-", suffix=".wav")
-            os.close(fd)
-            wav_path = Path(path)
-            with wave.open(str(wav_path), "wb") as output:
-                output.setnchannels(samples.shape[0])
-                output.setsampwidth(2)
-                output.setframerate(sample_rate)
-                output.writeframes(pcm.tobytes())
-            paths.append(wav_path)
+    with ExitStack() as cleanup:
+        for audio_item in _media_slot_values(audio, "audio"):
+            waveform = audio_item["waveform"]
+            waveforms = list(waveform) if waveform.dim() == 3 else [waveform]
+            sample_rate = int(audio_item["sample_rate"])
+            for item in waveforms:
+                samples = item.detach().cpu().float().numpy()
+                if samples.ndim == 1:
+                    samples = samples[None, :]
+                pcm = (samples.T.clip(-1.0, 1.0) * 32767).astype("<i2")
+                fd, path = tempfile.mkstemp(prefix="llm-turbo-audio-", suffix=".wav")
+                os.close(fd)
+                wav_path = Path(path)
+                cleanup.callback(wav_path.unlink, missing_ok=True)
+                with wave.open(str(wav_path), "wb") as output:
+                    output.setnchannels(samples.shape[0])
+                    output.setsampwidth(2)
+                    output.setframerate(sample_rate)
+                    output.writeframes(pcm.tobytes())
+                paths.append(wav_path)
+        cleanup.pop_all()
     return paths
 
 
@@ -109,7 +121,10 @@ def _write_temp_text_file(prefix: str, text: str) -> Path:
     fd, path = tempfile.mkstemp(prefix=prefix, suffix=".txt")
     os.close(fd)
     text_path = Path(path)
-    text_path.write_text(text, encoding="utf-8", newline="\n")
+    with ExitStack() as cleanup:
+        cleanup.callback(text_path.unlink, missing_ok=True)
+        text_path.write_text(text, encoding="utf-8", newline="\n")
+        cleanup.pop_all()
     return text_path
 
 
@@ -146,6 +161,7 @@ def build_command(
     mtp_model_path: Path | None = None,
     flash_attention: str = "auto",
     kv_cache: str = KV_CACHE_OPTIONS[0],
+    executable: Path | None = None,
 ) -> tuple[list[str], tuple[Path | None, ...]]:
     if flash_attention not in FLASH_ATTENTION_OPTIONS:
         raise ValueError(f"Unsupported Flash Attention mode: {flash_attention}")
@@ -153,28 +169,32 @@ def build_command(
         raise ValueError(f"Unsupported KV cache choice: {kv_cache}")
 
     kv_cache_type = KV_CACHE_TYPES[kv_cache]
+    seed = normalize_llama_seed(seed)
     cleanup_paths = []
-    cli_paths = ensure_llama_cli_paths()
-    image_paths = []
-    audio_paths = []
-    if images is not None or audio is not None:
-        if mmproj_path is None:
-            raise ValueError("Image and audio input require a selected multimodal mmproj GGUF file.")
-    if images is not None:
+    cli = executable if executable is not None else ensure_llama_cli_paths().cli
+    if (_media_slot_values(images, "image") or _media_slot_values(audio, "audio")) and mmproj_path is None:
+        raise ValueError("Image and audio input require a selected multimodal mmproj GGUF file.")
+    with ExitStack() as cleanup:
         image_paths = tensor_to_temp_pngs(images)
         cleanup_paths.extend(image_paths)
-    if audio is not None:
+        for path in image_paths:
+            cleanup.callback(path.unlink, missing_ok=True)
         audio_paths = audio_to_temp_wavs(audio)
         cleanup_paths.extend(audio_paths)
-    prompt_path = _write_prompt_file(user_prompt)
-    cleanup_paths.append(prompt_path)
-    system_prompt_path = None
-    if system_prompt.strip():
-        system_prompt_path = _write_temp_text_file("llm-turbo-system-", system_prompt)
-        cleanup_paths.append(system_prompt_path)
+        for path in audio_paths:
+            cleanup.callback(path.unlink, missing_ok=True)
+        prompt_path = _write_prompt_file(user_prompt)
+        cleanup_paths.append(prompt_path)
+        cleanup.callback(prompt_path.unlink, missing_ok=True)
+        system_prompt_path = None
+        if system_prompt.strip():
+            system_prompt_path = _write_temp_text_file("llm-turbo-system-", system_prompt)
+            cleanup_paths.append(system_prompt_path)
+            cleanup.callback(system_prompt_path.unlink, missing_ok=True)
+        cleanup.pop_all()
 
     command = [
-        str(cli_paths.cli),
+        str(cli),
         "-m", str(model_path),
         "-n", str(max_tokens),
         "--temp", str(temperature),
@@ -184,9 +204,10 @@ def build_command(
         "--repeat-penalty", str(repeat_penalty),
         "--presence-penalty", str(presence_penalty),
         "-c", str(context_window_size),
-        "--seed", str(normalize_llama_seed(seed)),
+        "--seed", str(seed),
         "--single-turn",
         "--reasoning", reasoning,
+        "--verbosity", "3",
     ]
 
     if system_prompt_path is not None:
@@ -233,14 +254,21 @@ def run_llama_cli(
             encoding="utf-8",
             errors="replace",
             shell=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            start_new_session=os.name != "nt",
+            cwd=Path(command[0]).parent,
+            env=binary_environment(Path(command[0])),
         )
         stdout, stderr = _communicate_with_interrupt(process, timeout_seconds)
         result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
     except BaseException:
+        clear_binary_cache()
         if process is not None:
             _stop_process(process)
         raise
     finally:
+        if process is not None:
+            _stop_process(process)
         # Temp prompt/image files can be large in workflows that run many times,
         # so cleanup happens even when llama.cpp exits with an error.
         for path in cleanup_paths:
@@ -248,6 +276,7 @@ def run_llama_cli(
                 path.unlink()
 
     if result.returncode != 0:
+        clear_binary_cache()
         stderr = result.stderr.strip()
         message = _parse_llama_error(stderr)
         if message:
@@ -255,10 +284,42 @@ def run_llama_cli(
         raise RuntimeError(
             f"llama.cpp inference failed with exit code {result.returncode}:\n{stderr}"
         )
-    return _parse_response(result.stdout + "\n" + result.stderr)
+    response, reasoning, perf = _parse_response(result.stdout)
+    if not perf:
+        match = PERF_RE.search(result.stderr)
+        perf = match.group(0) if match else ""
+    count = re.search(r"(?<!prompt )eval time\s*=\s*[\d.]+\s*ms\s*/\s*(\d+)\s+tokens", result.stderr)
+    speeds = re.search(r"Prompt:\s*([\d.]+)\s*t/s\s*\|\s*Generation:\s*([\d.]+)\s*t/s", perf)
+    lines = [f"Prompt speed: {float(speeds.group(1)):.2f} tokens/s", f"Generation speed: {float(speeds.group(2)):.2f} tokens/s"] if speeds else []
+    acceptance = re.search(r"draft acceptance\s*=\s*[\d.]+\s*\(\s*(\d+)\s+accepted\s*/\s*(\d+)\s+generated", result.stderr)
+    if "--model-draft" in command and acceptance and int(acceptance.group(2)) > 0:
+        lines.append(f"MTP acceptance: {100 * int(acceptance.group(1)) / int(acceptance.group(2)):.0f}%")
+    if lines:
+        lines.append("")
+    context = re.search(r"total time\s*=\s*[\d.]+\s*ms\s*/\s*(\d+)\s+tokens", result.stderr)
+    lines.append(f"Context usage: {context.group(1)} tokens" if context else "Context usage: unavailable")
+    lines.append(f"Generated tokens: {count.group(1)}" if count else "Generated tokens: unavailable")
+    stats = "\n".join(lines)
+    return response, reasoning, stats
 
 
 def _stop_process(process: subprocess.Popen) -> None:
+    if os.name != "nt":
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            pass
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        process.wait(timeout=3)
+        return
     if process.poll() is not None:
         return
     process.terminate()
@@ -289,6 +350,9 @@ def _communicate_with_interrupt(process: subprocess.Popen, timeout_seconds: int)
 
 def _parse_response(text: str) -> tuple[str, str, str]:
     text = str(text or "")
+    text = re.sub(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+    text = re.sub(r"[^\n]\x08", "", text)
+    text = re.sub(r"(?m)^[ \t]*[\u2800-\u28ff]+[ \t]*\r?$\n?", "", text)
     if PROMPT_ECHO_END in text:
         text = text.split(PROMPT_ECHO_END, 1)[1]
 

@@ -16,7 +16,7 @@ from .nodes.generation_queue_manager import GenerationQueueManager
 from .nodes.seed_nodes import ChainSeed, StageSeed
 from .nodes.prompt_template_builder import PromptTemplateBuilder
 from .nodes.json_prompt_splitter import JSONPromptSplitter
-from .nodes.video_compare_pro import VideoComparePro
+from .nodes.media_compare_pro import MediaComparePro
 from .nodes.reroute_switch import RerouteSwitch
 from .nodes.circuit_switch import CircuitSwitch
 
@@ -40,7 +40,7 @@ NODE_CLASS_MAPPINGS = {
     "ElvaxChainSeed": ChainSeed,
     "ElvaxPromptTemplateBuilder": PromptTemplateBuilder,
     "ElvaxJSONPromptSplitter": JSONPromptSplitter,
-    "ElvaxVideoComparePro": VideoComparePro,
+    "ElvaxMediaComparePro": MediaComparePro,
     "ElvaxRerouteSwitch": RerouteSwitch,
     "ElvaxCircuitSwitch": CircuitSwitch,
 }
@@ -63,7 +63,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ElvaxChainSeed": "Chain Seed",
     "ElvaxPromptTemplateBuilder": "Prompt Template Builder",
     "ElvaxJSONPromptSplitter": "JSON Prompt Splitter",
-    "ElvaxVideoComparePro": "Video Compare Pro",
+    "ElvaxMediaComparePro": "Media Compare Pro",
     "ElvaxRerouteSwitch": "Reroute Switch",
     "ElvaxCircuitSwitch": "Circuit Switch",
 }
