@@ -144,6 +144,8 @@ Groups show an always-visible ON/OFF switch to enable or bypass their nodes.
 Right-click the switch to hide it, or the group header to show it again.
 Visibility is saved per group; rgthree's header buttons return when the switch is hidden.
 
+![Group Toggles](assets/group-toggles.gif)
+
 # Installation
 
 ### ComfyUI Manager
