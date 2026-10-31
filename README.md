@@ -115,20 +115,28 @@ Manage ComfyUI's generation queue. Reorder, pause, resume, or cancel jobs. Stop 
 
 ![Generation Queue Manager](assets/generation-queue-manager.jpg)
 
-## Video Compare Pro
+## Media Compare Pro
 
-Connect the source videos to the `before_video` and `after_video` sockets, then use
-**Load the Before Video** and **Load the After Video** to store each version.
-Compare using the hover Slider, Side by Side, or Overlay with a blend slider between the Before/After labels.
-All modes share playback controls; the B/A switch selects Before or After audio.
-Captures use ComfyUI's temp folder. Dropped videos reuse identical files already in ComfyUI's input or output folders when available.
+Connect video, a single image, or audio to `before` and `after`, or drag and drop files onto either side.
+Use Slider, Before/After with overlay, or Side by Side for images and videos.
+Audio compares with audio only, with synchronized Before/After and B/A controls and a shared timeline.
+Image-only comparisons disable playback and audio controls; fullscreen stays available.
+Generation Differences shows available metadata, including PNG and ComfyUI WebP generation settings.
+Captures use ComfyUI's temp folder. Dropped files reuse identical files already in ComfyUI's input or output folders when available.
+
+<table>
+<tr>
+<td align="center"><img src="assets/media-compare-pro-drop.jpg" alt="Media Compare Pro drag-and-drop view" width="100%"></td>
+<td align="center"><img src="assets/media-compare-pro.jpg" alt="Media Compare Pro comparison view" width="100%"></td>
+</tr>
+</table>
 
 ## Reroute Switch
 
 Connect any value and use the A/B toggle to choose which output receives it.
 The inactive output blocks its branch; its links stay connected and appear gray.
 An inactive route into an optional socket is treated as disconnected during execution.
-Video Compare Pro can load through the active route while keeping both captured videos.
+Media Compare Pro can load through the active route while keeping both captured inputs.
 The selected output is saved with the workflow.
 
 ## Circuit Switch
