@@ -67,12 +67,9 @@ separate outputs in their original order, Supports Set/Get nodes and Reroutes!
 
 ![Dynamic Pipe In and Dynamic Pipe Out](assets/dynamic-pipes.gif)
 
-## Reroute Switch
+## Reroute Switch / Circuit Switch
 
 Choose which connected path runs. The inactive path is blocked.
-
-## Circuit Switch
-
 Open or close the connected path. Closed passes the input; open blocks it.
 
 ![Reroute Switch / Circuit Switch](assets/switches.gif)
