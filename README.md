@@ -109,12 +109,12 @@ decode workflow.
 
 ![H3 Custom Extension Sampler](assets/custom-extension.jpg)
 
-## Queue Reference Map
+## Generation Queue Manager
 
 Keep track of queued generations with their first reference image and prompt.
 See the current queue order and cancel an individual item directly from the node.
 
-![Queue Reference Map](assets/queue-reference-map.jpg)
+![Generation Queue Manager](assets/generation-queue-manager.jpg)
 
 ## Video Compare Pro
 
