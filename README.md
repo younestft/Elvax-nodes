@@ -125,7 +125,7 @@ decode workflow.
 
 ![H3 Custom Extension Sampler](assets/custom-extension.jpg)
 
-## Reroute Switch
+## Reroute Switch / Circuit Switch
 
 Connect any value and use the A/B toggle to choose which output receives it.
 The inactive output blocks its branch; its links stay connected and appear gray.
@@ -133,10 +133,10 @@ An inactive route into an optional socket is treated as disconnected during exec
 Media Compare Pro can load through the active route while keeping both captured inputs.
 The selected output is saved with the workflow.
 
-## Circuit Switch
-
 Connect a value through the switch and click the circuit contact to open or close it.
 Closed passes the value by default; open blocks execution while keeping the wire connected.
+
+![Reroute Switch and Circuit Switch](assets/switches.gif)
 
 ## Group toggles
 
