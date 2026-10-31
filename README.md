@@ -93,9 +93,7 @@ separate outputs in their original order, Supports Set/Get nodes and Reroutes!
 
 ## Reroute Switch / Circuit Switch
 
-## Reroute Switch : Choose which connected path runs. The inactive path is blocked.
-
-## Circuit Switch : Open or close the connected path. Closed passes the input; open blocks it.
+**Reroute Switch:** Choose which connected path runs. The inactive path is blocked. **Circuit Switch:** Open or close the connected path. Closed passes the input; open blocks it.
 
 ![Reroute Switch / Circuit Switch](assets/switches.gif)
 
