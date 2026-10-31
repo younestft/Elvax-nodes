@@ -44,6 +44,23 @@ with extra VRAM Optimizations to prevent OOM.
 
 ![Turbo Post Processing](assets/turbo-post-processing.jpg)
 
+## Media Compare Pro
+
+Compare videos, single images, or audio and inspect their generation differences. Drag and drop media or load connected inputs manually or automatically. Compare audio with audio only.
+
+<table>
+<tr>
+<td align="center"><img src="assets/media-compare-pro-drop.jpg" alt="Media Compare Pro drag-and-drop view" width="100%"></td>
+<td align="center"><img src="assets/media-compare-pro.jpg" alt="Media Compare Pro comparison view" width="100%"></td>
+</tr>
+</table>
+
+## Generation Queue Manager
+
+Manage ComfyUI's generation queue. Reorder, pause, resume, or cancel jobs. Stop a running job and keep it saved to run again. Paused jobs remain saved across restarts.
+
+![Generation Queue Manager](assets/generation-queue-manager.jpg)
+
 ## Dynamic Pipe In / Dynamic Pipe Out
 
 Tidy your complex workflows with Dynamic Pipes : 
@@ -108,23 +125,6 @@ lightweight: the node returns the accumulated `chain_latent` and this stage's
 decode workflow.
 
 ![H3 Custom Extension Sampler](assets/custom-extension.jpg)
-
-## Media Compare Pro
-
-Compare videos, single images, or audio and inspect their generation differences. Drag and drop media or load connected inputs manually or automatically. Compare audio with audio only.
-
-<table>
-<tr>
-<td align="center"><img src="assets/media-compare-pro-drop.jpg" alt="Media Compare Pro drag-and-drop view" width="100%"></td>
-<td align="center"><img src="assets/media-compare-pro.jpg" alt="Media Compare Pro comparison view" width="100%"></td>
-</tr>
-</table>
-
-## Generation Queue Manager
-
-Manage ComfyUI's generation queue. Reorder, pause, resume, or cancel jobs. Stop a running job and keep it saved to run again. Paused jobs remain saved across restarts.
-
-![Generation Queue Manager](assets/generation-queue-manager.jpg)
 
 ## Reroute Switch
 
