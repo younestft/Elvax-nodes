@@ -40,7 +40,7 @@ Image and audio inputs require a compatible model and projector (`mmproj`).
 | Linux ARM64 | CUDA, Vulkan, Custom* |
 | macOS (Intel and Apple Silicon) | Metal, Custom* |
 
-*Custom uses your own llama.cpp build.
+*Custom lets you supply your own llama.cpp build.
 
 ## Load/Crop Image
 
