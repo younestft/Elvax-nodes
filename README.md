@@ -64,8 +64,8 @@ Compare videos, single images, or audio and inspect their generation differences
 
 <table>
 <tr>
-<td align="center"><img src="assets/media-compare-pro-drop.jpg" alt="Media Compare Pro drag-and-drop view" width="100%"></td>
-<td align="center"><img src="assets/media-compare-pro.jpg" alt="Media Compare Pro comparison view" width="100%"></td>
+<td align="center"><img src="assets/media-compare-pro-drop-v2.jpg" alt="Media Compare Pro drag-and-drop view" width="100%"></td>
+<td align="center"><img src="assets/media-compare-pro-v2.jpg" alt="Media Compare Pro comparison view" width="100%"></td>
 </tr>
 </table>
 
