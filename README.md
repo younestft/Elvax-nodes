@@ -25,7 +25,12 @@ Put your GGUF models in `models/LLM` or `models/text_encoders`
 
 Image and audio inputs require a compatible model and projector (`mmproj`).
 
-![LLM Turbo](assets/llm-turbo-v2.gif)
+<table>
+<tr>
+<td><img src="assets/llm-turbo-1.gif" alt="LLM Turbo example 1" width="100%"></td>
+<td><img src="assets/llm-turbo-2.gif" alt="LLM Turbo example 2" width="100%"></td>
+</tr>
+</table>
 
 ## Load/Crop Image
 
