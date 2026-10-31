@@ -57,6 +57,36 @@ with extra VRAM Optimizations to prevent OOM.
 
 ![Turbo Post Processing](assets/turbo-post-processing.jpg)
 
+## Media Compare Pro
+
+Connect video, a single image, or audio to `before` and `after`, or drag and drop files onto either side.
+Use Slider, Before/After with overlay, or Side by Side for images and videos.
+Audio compares with audio only, with synchronized Before/After and B/A controls and a shared timeline.
+Image-only comparisons disable playback and audio controls; fullscreen stays available.
+Generation Differences shows available metadata, including PNG and ComfyUI WebP generation settings.
+Captures use ComfyUI's temp folder. Dropped files reuse identical files already in ComfyUI's input or output folders when available.
+
+<table>
+<tr>
+<td align="center"><img src="assets/media-compare-pro-drop.jpg" alt="Media Compare Pro drag-and-drop view" width="100%"></td>
+<td align="center"><img src="assets/media-compare-pro.jpg" alt="Media Compare Pro comparison view" width="100%"></td>
+</tr>
+</table>
+
+## Generation Queue Manager
+
+Manage ComfyUI's generation queue. Reorder, pause, resume, or cancel jobs. Stop a running job and keep it saved to run again. Paused jobs remain saved across restarts.
+
+![Generation Queue Manager](assets/generation-queue-manager.jpg)
+
+## Fast Group Toggles
+
+Toggle groups on or off to enable or bypass their nodes. Click the pin to pin or unpin a group.
+
+Right-click the switch to hide its controls. To restore them, right-click the group's upper-right corner and choose **Show Elvax Group Controls**.
+
+![Fast Group Toggles](assets/group-toggles.gif)
+
 ## Dynamic Pipe In / Dynamic Pipe Out
 
 Tidy your complex workflows with Dynamic Pipes : 
@@ -127,36 +157,6 @@ lightweight: the node returns the accumulated `chain_latent` and this stage's
 decode workflow.
 
 ![H3 Custom Extension Sampler](assets/custom-extension.jpg)
-
-## Media Compare Pro
-
-Connect video, a single image, or audio to `before` and `after`, or drag and drop files onto either side.
-Use Slider, Before/After with overlay, or Side by Side for images and videos.
-Audio compares with audio only, with synchronized Before/After and B/A controls and a shared timeline.
-Image-only comparisons disable playback and audio controls; fullscreen stays available.
-Generation Differences shows available metadata, including PNG and ComfyUI WebP generation settings.
-Captures use ComfyUI's temp folder. Dropped files reuse identical files already in ComfyUI's input or output folders when available.
-
-<table>
-<tr>
-<td align="center"><img src="assets/media-compare-pro-drop.jpg" alt="Media Compare Pro drag-and-drop view" width="100%"></td>
-<td align="center"><img src="assets/media-compare-pro.jpg" alt="Media Compare Pro comparison view" width="100%"></td>
-</tr>
-</table>
-
-## Generation Queue Manager
-
-Manage ComfyUI's generation queue. Reorder, pause, resume, or cancel jobs. Stop a running job and keep it saved to run again. Paused jobs remain saved across restarts.
-
-![Generation Queue Manager](assets/generation-queue-manager.jpg)
-
-## Fast Group Toggles
-
-Toggle groups on or off to enable or bypass their nodes. Click the pin to pin or unpin a group.
-
-Right-click the switch to hide its controls. To restore them, right-click the group's upper-right corner and choose **Show Elvax Group Controls**.
-
-![Fast Group Toggles](assets/group-toggles.gif)
 
 # Installation
 
