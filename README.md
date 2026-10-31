@@ -68,12 +68,6 @@ Compare videos, single images, or audio and inspect their generation differences
 </tr>
 </table>
 
-## Generation Queue Manager
-
-Manage ComfyUI's generation queue. Reorder, pause, resume, or cancel jobs. Stop a running job and keep it saved to run again. Paused jobs remain saved across restarts.
-
-![Generation Queue Manager](assets/generation-queue-manager.jpg)
-
 ## Fast Group Toggles
 
 Toggle groups on or off to enable or bypass their nodes. Click the pin to pin or unpin a group.
@@ -81,6 +75,12 @@ Toggle groups on or off to enable or bypass their nodes. Click the pin to pin or
 Right-click the switch to hide its controls. To restore them, right-click the group's upper-right corner and choose **Show Elvax Group Controls**.
 
 ![Fast Group Toggles](assets/group-toggles.gif)
+
+## Generation Queue Manager
+
+Manage ComfyUI's generation queue. Reorder, pause, resume, or cancel jobs. Stop a running job and keep it saved to run again. Paused jobs remain saved across restarts.
+
+![Generation Queue Manager](assets/generation-queue-manager.jpg)
 
 ## Dynamic Pipe In / Dynamic Pipe Out
 
