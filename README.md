@@ -109,12 +109,6 @@ decode workflow.
 
 ![H3 Custom Extension Sampler](assets/custom-extension.jpg)
 
-## Generation Queue Manager
-
-Manage ComfyUI's generation queue. Reorder, pause, resume, or cancel jobs. Stop a running job and keep it saved to run again. Paused jobs remain saved across restarts.
-
-![Generation Queue Manager](assets/generation-queue-manager.jpg)
-
 ## Media Compare Pro
 
 Compare videos, single images, or audio and inspect their generation differences. Drag and drop media or load connected inputs manually or automatically. Compare audio with audio only.
@@ -125,6 +119,12 @@ Compare videos, single images, or audio and inspect their generation differences
 <td align="center"><img src="assets/media-compare-pro.jpg" alt="Media Compare Pro comparison view" width="100%"></td>
 </tr>
 </table>
+
+## Generation Queue Manager
+
+Manage ComfyUI's generation queue. Reorder, pause, resume, or cancel jobs. Stop a running job and keep it saved to run again. Paused jobs remain saved across restarts.
+
+![Generation Queue Manager](assets/generation-queue-manager.jpg)
 
 ## Reroute Switch
 
