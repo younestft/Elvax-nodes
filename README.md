@@ -83,8 +83,7 @@ Build a structured JSON prompt that you can feed to your favourite LLM
 with editable/nested fields, customizable field colours.
 Save/load preserves everything in the JSON including hidden fields and colours.
 
-JSON Prompt Splitter automatically detects and splits a big JSON,
-to the chosen number of videos specified in the Prompt Template Builder.
+JSON Prompt Splitter splits a JSON prompt into the selected number of videos, as specified in Prompt Template Builder, and bypasses the unused stages.
 
 ![Prompt Template Builder](assets/prompt-template-builder.jpg)
 
