@@ -69,16 +69,11 @@ separate outputs in their original order, Supports Set/Get nodes and Reroutes!
 
 ## Reroute Switch
 
-Connect any value and use the A/B toggle to choose which output receives it.
-The inactive output blocks its branch; its links stay connected and appear gray.
-An inactive route into an optional socket is treated as disconnected during execution.
-Media Compare Pro can load through the active route while keeping both captured media files.
-The selected output is saved with the workflow.
+Choose which connected path runs. The inactive path is blocked.
 
 ## Circuit Switch
 
-Connect a value through the switch and click the circuit contact to open or close it.
-Closed passes the input by default; open blocks execution while keeping the wire connected.
+Open or close the connected path. Closed passes the input; open blocks it.
 
 ![Reroute Switch / Circuit Switch](assets/switches.gif)
 
