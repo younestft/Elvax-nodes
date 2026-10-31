@@ -37,9 +37,9 @@ Image and audio inputs require a compatible model and projector (`mmproj`).
 |---|---|
 | Windows x64 | CUDA, Vulkan, ROCm, Custom* |
 | Linux x64 | CUDA, Vulkan, ROCm, Custom* |
+| macOS | Metal, Custom* |
 | Windows ARM64 | CUDA, Vulkan, Custom* |
 | Linux ARM64 | CUDA, Vulkan, Custom* |
-| macOS | Metal, Custom* |
 
 *Custom lets you supply your own llama.cpp build.
 
