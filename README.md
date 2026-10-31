@@ -60,7 +60,8 @@ with extra VRAM Optimizations to prevent OOM.
 
 ## Media Compare Pro
 
-Compare videos, single images, or audio and inspect their generation differences. Drag and drop media or load connected inputs manually or automatically. Compare audio with audio only.
+Compare videos, single images, or audio and inspect their generation differences. 
+Drag and drop media or load connected inputs manually or automatically. (Audio compares with audio with audio only)
 
 <table>
 <tr>
