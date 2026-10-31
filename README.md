@@ -111,8 +111,7 @@ decode workflow.
 
 ## Generation Queue Manager
 
-Keep track of queued generations with their first reference image and prompt.
-See the current queue order and cancel an individual item directly from the node.
+Manage ComfyUI's generation queue. Reorder, pause, resume, or cancel jobs. Stop a running job and keep it saved to run again. Paused jobs remain saved across restarts.
 
 ![Generation Queue Manager](assets/generation-queue-manager.jpg)
 
