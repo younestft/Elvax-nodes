@@ -3,12 +3,13 @@
 Convenience nodes for ComfyUI!
 
 - LLM TURBO: Run local LLMs faster, directly in ComfyUI
-- Load and crop images faster in one node
+- Load, crop, rotate, and scale images faster in one node
 - Upscale, interpolate, and add film grain in one node
+- Compare videos, images, or audio and inspect their generation differences
 - Tidy workflows with Dynamic Pipes, supporting Set/Get nodes and reroutes
 - Extend Minimax H3 Videos
 
-And more...
+And much more...
 
 ## LLM Turbo
 
