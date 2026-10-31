@@ -44,10 +44,6 @@ Image and audio inputs require a compatible model and projector (`mmproj`).
 
 *Custom uses your own llama.cpp build.
 
-`auto_unload: true` runs llama-cli and releases its memory after each request. With `false`, a managed local llama-server retains the model for reuse. Changing the loaded configuration restarts it; switching back to `true` closes it. Retained models continue using VRAM that image/video generation may need. The server binds only to loopback, and requests contain their own prompts rather than accumulated chat history.
-
-Windows CUDA and Vulkan tests cover CLI/server inference, image batches, audio, and MTP; Custom build inference and server reuse were also tested. Linux CUDA installation, CLI/server inference helpers, and process-group cleanup passed in Ubuntu under WSL with an RTX 3090. Package selection is checked for all listed platforms. Full Linux ComfyUI workflows, Linux Vulkan, ROCm, Windows/Linux ARM64 hardware, and macOS hardware remain unverified.
-
 ## Load/Crop Image
 
 Load and crop an image quickly in one node. Refine the crop interactively, send
